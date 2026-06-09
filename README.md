@@ -59,12 +59,28 @@ codex-telegram-agent/
       final.md          # Codex 最終回覆
       artifacts/        # 圖片、文件等使用者產物
   systemd/
-    codex-telegram-agent.service
+    codex-telegram-agent.service  # 尚未安裝的 systemd unit 範本
+  tests/
+    test_artifacts.py
+    test_db.py
+  .gitignore            # 排除 secrets 與 runtime data
   .env                  # Runtime secrets and local configuration
   .env.example          # Environment template
   FEATURE_BACKLOG.md    # 待開發與已完成功能
   requirements.txt
   README.md
+```
+
+下列內容只存在部署主機，不會提交至 Git：
+
+```text
+.env
+.venv/
+__pycache__/
+data/
+logs/
+outputs/
+tasks/
 ```
 
 ## 目前支援的 Telegram 指令
@@ -109,6 +125,12 @@ WORKER_POLL_SECONDS=2
 
 不要將真實 bot token 寫入 Git 或公開文件。
 
+建立 `.env` 後應限制檔案權限：
+
+```bash
+chmod 600 /home/ai-agent/codex-telegram-agent/.env
+```
+
 `.env.example` 預設使用較保守的 `workspace-write`。目前遠端主機無法
 初始化 bubblewrap sandbox，經管理者明確核准後，實際部署環境使用
 `CODEX_SANDBOX_MODE=danger-full-access`。
@@ -116,31 +138,101 @@ WORKER_POLL_SECONDS=2
 此模式不提供 Codex 內建檔案 sandbox，Codex 可以讀寫 `ai-agent` Linux
 帳號原本就有權限存取的檔案。請勿任意擴大該帳號的 sudo 或檔案權限。
 
-## 遠端部署
+## 首次安裝
+
+先在部署主機建立專用 SSH Deploy Key：
+
+```bash
+key="$HOME/.ssh/codex_telegram_agent_github_ed25519"
+ssh-keygen -t ed25519 -N "" \
+  -C "codex-telegram-agent deploy key" \
+  -f "$key"
+cat "$key.pub"
+```
+
+將輸出的公鑰加入私人 GitHub repository 的
+**Settings > Deploy keys**。部署主機只需要抓取更新時，不要勾選
+`Allow write access`。
+
+確認 SSH 驗證成功後再 clone repository：
+
+```bash
+key="$HOME/.ssh/codex_telegram_agent_github_ed25519"
+ssh -i "$key" -o IdentitiesOnly=yes \
+  -o StrictHostKeyChecking=accept-new -T git@github.com
+
+GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes" \
+  git clone git@github.com:EggMaster0906/codex-telegram-agent.git \
+  /home/ai-agent/codex-telegram-agent
+cd /home/ai-agent/codex-telegram-agent
+git config core.sshCommand \
+  "ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
+chmod 600 .env
+```
+
+確認 repository 讀取權限：
 
 ```bash
 cd /home/ai-agent/codex-telegram-agent
-./.venv/bin/python -m app.bot
+git fetch origin
 ```
 
-目前部署位置與 Codex CLI：
+`ssh -T` 成功時 GitHub 仍會回傳不提供 shell access，這是正常行為。
+
+## 遠端部署與更新
+
+目前部署位置與 Codex CLI 為：
 
 ```text
 /home/ai-agent/codex-telegram-agent
 /home/ai-agent/.local/bin/codex
 ```
 
-Bot 目前以手動背景程序執行，log 位於：
+更新前先確認工作樹乾淨，並備份不可由 Git 還原的 runtime data：
+
+```bash
+cd /home/ai-agent/codex-telegram-agent
+git status --short --branch
+
+archive="$HOME/codex-telegram-agent-runtime-$(date +%Y%m%d-%H%M%S).tar.gz"
+tar -czf "$archive" .env data logs outputs tasks
+chmod 600 "$archive"
+
+git pull --ff-only origin main
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python -m unittest discover -s tests -v
+```
+
+`.venv/` 與 `__pycache__/` 可重新建立，因此不必放入日常 runtime 備份。
+
+目前 Bot 以手動背景程序執行，程式更新後需要手動重啟。先找出現有 PID：
+
+```bash
+pgrep -af -- "python -m app.bot"
+```
+
+使用 `kill <PID>` 停止確認過的程序，接著重新啟動：
+
+```bash
+cd /home/ai-agent/codex-telegram-agent
+mkdir -p logs
+nohup ./.venv/bin/python -m app.bot \
+  >> logs/bot-manual.log 2>&1 &
+```
+
+執行 log 位於：
 
 ```text
 /home/ai-agent/codex-telegram-agent/logs/bot-manual.log
 ```
 
-檢查程序：
-
-```bash
-pgrep -af -- "python -m app.bot"
-```
+repository 內的 `systemd/codex-telegram-agent.service` 目前只是 unit 範本，
+尚未安裝至主機；因此 `systemctl restart codex-telegram-agent` 目前不可用。
 
 ## 驗證
 
