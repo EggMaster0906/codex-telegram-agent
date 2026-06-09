@@ -22,7 +22,8 @@ Telegram 使用者
 - 透過 Codex CLI 非互動模式執行任務。
 - 每個 Task 使用獨立目錄保存 prompt、log、final output 與 artifacts。
 - 任務完成後將 final output 分段回傳 Telegram。
-- 自動使用 Telegram `send_document` 傳送任務產生的 artifacts。
+- 一般任務預設只回傳 Telegram 文字。
+- 僅自動傳送 Agent 在 delivery manifest 中指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
 - 支援 `/continue <task_id> <後續問題>` 延伸已完成的任務。
@@ -37,11 +38,12 @@ Telegram 使用者
 2. Bot 將任務寫入 SQLite，狀態設為 `pending`。
 3. Bot 建立 `tasks/task-XXXXXX/` 與 `artifacts/`。
 4. Worker 將任務改為 `running` 並呼叫 Codex CLI。
-5. Codex 在原 workspace 工作，使用者產物寫入該 Task 的 `artifacts/`。
-6. Worker 保存完整 log 與 Codex 最終回覆。
-7. 成功時回傳文字結果並自動傳送 artifacts。
-8. 使用者之後可查詢結果與 log，或建立保留原始上下文的後續任務。
-9. 使用者仍可透過 `/file <task_id>` 重新下載。
+5. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Task 的 `artifacts/`。
+6. Codex 寫入 `.delivery.json`，聲明本次為純文字或列出應交付附件。
+7. Worker 保存完整 log 與 Codex 最終回覆。
+8. 成功時回傳文字結果，並只自動傳送 manifest 指定的 artifacts。
+9. 使用者之後可查詢結果與 log，或建立保留原始上下文的後續任務。
+10. 使用者仍可透過 `/file <task_id>` 重新下載所有任務產物。
 
 ## 專案結構
 
@@ -63,7 +65,9 @@ codex-telegram-agent/
       prompt.txt        # 原始任務內容
       task.log          # 完整執行 log
       final.md          # Codex 最終回覆
-      artifacts/        # 圖片、文件等使用者產物
+      artifacts/
+        .delivery.json  # 純文字或自動附件交付清單
+        ...             # 圖片、文件等使用者產物
   systemd/
     codex-telegram-agent.service  # 尚未安裝的 systemd unit 範本
   tests/
@@ -113,7 +117,9 @@ Telegram 的 Bot 指令選單。
 `/status` 會顯示目前 chat 最近五筆任務與狀態。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 下載，並傳送該 Task
-的 `final.md` 與所有 artifacts。新任務完成時，artifacts 也會自動傳送。
+的 `final.md` 與所有 artifacts。新任務完成時只會自動傳送
+`.delivery.json` 明確列出的附件；一般問答即使意外建立 Markdown 檔，也不會
+自動作為附件傳送。
 
 `/result <task_id>` 會將指定任務的 final output 分段回傳。
 

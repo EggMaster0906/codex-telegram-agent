@@ -9,7 +9,7 @@ from telegram.error import TelegramError
 from app.artifacts import (
     FINAL_OUTPUT_NAME,
     TASK_LOG_NAME,
-    artifact_files,
+    delivered_artifact_files,
     prepare_task_directory,
     task_directory,
 )
@@ -97,7 +97,7 @@ class Worker:
             codex_session_id=task.codex_session_id,
             parent_task_id=task.parent_task_id,
         )
-        files = artifact_files(completed_task)
+        files = delivered_artifact_files(completed_task)
         for path in files:
             try:
                 with path.open("rb") as document:

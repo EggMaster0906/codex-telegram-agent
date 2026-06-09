@@ -19,12 +19,24 @@ async def run_codex(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
+    delivery_manifest_path = artifact_dir / ".delivery.json"
     artifact_instruction = (
         "\n\n"
-        "Output file requirement:\n"
-        f"- Save every file created for the user under: {artifact_dir}\n"
+        "Telegram delivery policy:\n"
+        "- The final response is delivered as a Telegram text message by default.\n"
+        "- Do not create a Markdown or text file merely to duplicate a normal answer.\n"
+        "- Create deliverable files only when the user explicitly requests a file or "
+        "when the requested result is inherently file-based, such as a presentation, "
+        "image, PDF, Word document, spreadsheet, archive, or modified source file.\n"
+        f"- Save every user deliverable under: {artifact_dir}\n"
         "- Do not save user deliverables elsewhere.\n"
-        "- In the final response, list the created file paths.\n"
+        f"- Always write a JSON delivery manifest to: {delivery_manifest_path}\n"
+        '- For text-only delivery, use: {"delivery":"text","attachments":[]}\n'
+        '- For file delivery, use: {"delivery":"files","attachments":["relative/path.ext"]}\n'
+        "- Attachment paths must be relative to the artifact directory and include only "
+        "files that should be automatically sent to the user.\n"
+        "- The delivery manifest is internal metadata. Do not mention it in the final "
+        "response and do not list absolute server paths.\n"
     )
 
     command = [
