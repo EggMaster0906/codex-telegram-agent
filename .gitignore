@@ -1,0 +1,24 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime state and generated artifacts
+data/
+logs/
+outputs/
+tasks/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
