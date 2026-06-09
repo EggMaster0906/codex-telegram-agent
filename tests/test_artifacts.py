@@ -54,6 +54,8 @@ class ArtifactTests(unittest.TestCase):
             log_path=str(log_path),
             output_path=str(output_path),
             error_message=None,
+            codex_session_id=None,
+            parent_task_id=None,
         )
 
 

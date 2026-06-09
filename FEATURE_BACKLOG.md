@@ -2,7 +2,9 @@
 
 這份文件用來記錄 Codex Telegram Agent 後續要擴充的功能、目的與初步實作方向。
 
-## 1. 根據 task id 追蹤後續提問
+## 1. 根據 task id 追蹤後續提問（已完成）
+
+完成日期：2026-06-10
 
 ### 目標
 
@@ -29,6 +31,17 @@
   第一版：讀取原 task prompt 與 final output，組成上下文後建立新 task。
   第二版：解析並儲存 Codex session id，使用 codex exec resume 延續同一個 session。
 ```
+
+### 已完成內容
+
+- `/result <task_id>` 分段回傳指定任務的 final output。
+- `/log <task_id>` 回傳最近 80 行、最多 12,000 字元的執行 log。
+- `/continue <task_id> <後續問題>` 使用原 prompt、final output 與新問題建立
+  後續 Task。
+- 後續 Task 沿用原任務 workspace，並以 `parent_task_id` 保存追蹤鏈。
+- 所有 Task ID 指令均驗證 Telegram chat id，禁止跨 chat 存取。
+- SQLite 啟動時自動 migration `parent_task_id` 與 `codex_session_id`。
+- 已預留 `codex_session_id`；Codex session resume 留待第二版實作。
 
 ### 需要新增的資料欄位
 

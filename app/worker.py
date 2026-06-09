@@ -94,6 +94,8 @@ class Worker:
             log_path=str(log_path),
             output_path=str(output_path),
             error_message=None,
+            codex_session_id=task.codex_session_id,
+            parent_task_id=task.parent_task_id,
         )
         files = artifact_files(completed_task)
         for path in files:

@@ -21,6 +21,8 @@ class Task:
     log_path: str | None
     output_path: str | None
     error_message: str | None
+    codex_session_id: str | None
+    parent_task_id: int | None
 
 
 class TaskStore:
@@ -47,9 +49,12 @@ class TaskStore:
                     log_path text,
                     output_path text,
                     error_message text,
+                    codex_session_id text,
+                    parent_task_id integer,
                     created_at text not null,
                     started_at text,
-                    finished_at text
+                    finished_at text,
+                    foreign key (parent_task_id) references tasks(id)
                 )
                 """
             )
@@ -59,15 +64,37 @@ class TaskStore:
             }
             if "task_dir" not in columns:
                 conn.execute("alter table tasks add column task_dir text")
+            if "codex_session_id" not in columns:
+                conn.execute("alter table tasks add column codex_session_id text")
+            if "parent_task_id" not in columns:
+                conn.execute("alter table tasks add column parent_task_id integer")
 
-    def create_task(self, chat_id: int, prompt: str, workspace_path: Path) -> int:
+    def create_task(
+        self,
+        chat_id: int,
+        prompt: str,
+        workspace_path: Path,
+        *,
+        parent_task_id: int | None = None,
+        codex_session_id: str | None = None,
+    ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
-                insert into tasks (chat_id, prompt, status, workspace_path, created_at)
-                values (?, ?, 'pending', ?, ?)
+                insert into tasks (
+                    chat_id, prompt, status, workspace_path, codex_session_id,
+                    parent_task_id, created_at
+                )
+                values (?, ?, 'pending', ?, ?, ?, ?)
                 """,
-                (chat_id, prompt, str(workspace_path), utc_now()),
+                (
+                    chat_id,
+                    prompt,
+                    str(workspace_path),
+                    codex_session_id,
+                    parent_task_id,
+                    utc_now(),
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -164,4 +191,6 @@ class TaskStore:
             log_path=row["log_path"],
             output_path=row["output_path"],
             error_message=row["error_message"],
+            codex_session_id=row["codex_session_id"],
+            parent_task_id=row["parent_task_id"],
         )

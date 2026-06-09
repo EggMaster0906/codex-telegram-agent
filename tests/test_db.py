@@ -40,7 +40,21 @@ class TaskStoreTests(unittest.TestCase):
             task = store.get_task(task_id, 123)
             self.assertIsNotNone(task)
             self.assertEqual(task.task_dir, str(task_dir))
+            self.assertIsNone(task.codex_session_id)
+            self.assertIsNone(task.parent_task_id)
             self.assertIsNone(store.get_task(task_id, 456))
+
+            followup_id = store.create_task(
+                123,
+                "follow up",
+                Path("/tmp"),
+                parent_task_id=task_id,
+                codex_session_id="session-123",
+            )
+            followup = store.get_task(followup_id, 123)
+            self.assertIsNotNone(followup)
+            self.assertEqual(followup.parent_task_id, task_id)
+            self.assertEqual(followup.codex_session_id, "session-123")
 
 
 if __name__ == "__main__":

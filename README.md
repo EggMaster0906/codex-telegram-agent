@@ -23,6 +23,9 @@ Telegram 使用者
 - 每個 Task 使用獨立目錄保存 prompt、log、final output 與 artifacts。
 - 任務完成後將 final output 分段回傳 Telegram。
 - 自動使用 Telegram `send_document` 傳送任務產生的 artifacts。
+- 支援 `/result <task_id>` 重新查看文字結果。
+- 支援 `/log <task_id>` 查看最近 80 行執行 log。
+- 支援 `/continue <task_id> <後續問題>` 延伸已完成的任務。
 - 支援 `/file <task_id>` 重新下載 final output 與 artifacts。
 - 下載時驗證 task 所屬 chat id，避免跨使用者讀取。
 - 啟動時自動 migration 既有 SQLite schema。
@@ -36,7 +39,8 @@ Telegram 使用者
 5. Codex 在原 workspace 工作，使用者產物寫入該 Task 的 `artifacts/`。
 6. Worker 保存完整 log 與 Codex 最終回覆。
 7. 成功時回傳文字結果並自動傳送 artifacts。
-8. 使用者之後仍可透過 `/file <task_id>` 重新下載。
+8. 使用者之後可查詢結果與 log，或建立保留原始上下文的後續任務。
+9. 使用者仍可透過 `/file <task_id>` 重新下載。
 
 ## 專案結構
 
@@ -49,6 +53,7 @@ codex-telegram-agent/
     db.py               # SQLite schema and task operations
     config.py           # Environment configuration
     codex_runner.py     # Codex CLI subprocess wrapper
+    task_followup.py    # Task 結果、log 與後續提問上下文
     telegram_utils.py   # Telegram message helpers
   data/
     tasks.sqlite3       # Runtime database
@@ -63,6 +68,7 @@ codex-telegram-agent/
   tests/
     test_artifacts.py
     test_db.py
+    test_task_followup.py
   .gitignore            # 排除 secrets 與 runtime data
   .env                  # Runtime secrets and local configuration
   .env.example          # Environment template
@@ -90,6 +96,9 @@ tasks/
 /run <task prompt>
 /status
 /file <task_id>
+/result <task_id>
+/log <task_id>
+/continue <task_id> <follow-up question>
 ```
 
 `/start` 會回傳目前 chat id 與授權狀態，方便第一次設定 `ALLOWED_CHAT_IDS`。
@@ -100,6 +109,16 @@ tasks/
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 下載，並傳送該 Task
 的 `final.md` 與所有 artifacts。新任務完成時，artifacts 也會自動傳送。
+
+`/result <task_id>` 會將指定任務的 final output 分段回傳。
+
+`/log <task_id>` 會回傳指定任務最近 80 行 log，最多 12,000 字元。
+
+`/continue <task_id> <follow-up question>` 只接受已完成且有 final output 的
+任務。Bot 會將原始 prompt、前次 final output 與新問題組成新的 Task，
+沿用原本 workspace，並以 `parent_task_id` 保存任務追蹤關係。
+
+所有依 Task ID 查詢的指令都會驗證 task 所屬 chat id。
 
 ## 環境變數
 
