@@ -2,7 +2,13 @@
 
 這份文件用來記錄 Codex Telegram Agent 後續要擴充的功能、目的與初步實作方向。
 
-## 1. 根據 task id 追蹤後續提問（已完成）
+## 功能狀態總覽
+
+- [x] 根據 task id 追蹤後續提問（第一版）
+- [x] 透過 Telegram 將 output file 傳送給使用者
+- [ ] 讀取使用者透過 Telegram 傳送的附件
+
+## 1. 根據 task id 追蹤後續提問（第一版已完成）
 
 完成日期：2026-06-10
 
@@ -116,3 +122,45 @@ tasks/
 - 將 artifact metadata 寫入資料庫，而非每次掃描 Task 目錄。
 - 支援 `/files <task_id>` 列出指定任務可下載的產物。
 - 加入 Telegram 檔案大小檢查與超過限制時的替代下載方式。
+
+## 3. 讀取使用者透過 Telegram 傳送的附件（待開發）
+
+狀態：尚未開始
+
+### 背景
+
+目前部署的 Telegram Bot 只能接收文字 prompt 並建立 Task，尚無法將使用者
+傳送的附件交給 Codex 讀取。
+
+### 目標
+
+讓使用者可以透過 Telegram 傳送文件、圖片或其他支援的附件，Bot 將附件
+下載至對應 Task 的目錄，並把檔案路徑與文字說明一併交給 Codex 處理。
+
+### 初步使用方式
+
+```text
+傳送附件並在 caption 填寫任務說明
+
+或
+
+先傳送附件，再透過指令或後續訊息補充 prompt
+```
+
+### 初步設計
+
+- 在 Bot 註冊 Telegram 文件、圖片等附件類型的 message handler。
+- 建立 Task 時保存附件至獨立的輸入目錄，例如
+  `tasks/task-000001/inputs/`。
+- 將附件本機路徑、原始檔名、檔案類型與使用者 prompt 一併提供給 Codex。
+- 支援附件搭配 caption 直接建立 Task。
+- 確保附件只能由原 Telegram chat 建立與存取。
+- 檢查檔案大小、檔名與 MIME type，拒絕不支援或超過限制的附件。
+- 避免路徑穿越、檔名衝突與覆寫既有 Task 檔案。
+- 補上附件下載、Task 建立、權限檢查與錯誤處理測試。
+
+### 待確認事項
+
+- 第一版要支援的附件類型與檔案大小上限。
+- 多個附件應合併為單一 Task，或每個附件各自建立 Task。
+- 沒有 caption 的附件要立即建立 Task，或等待使用者補充 prompt。
