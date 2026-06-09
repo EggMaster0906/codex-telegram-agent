@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -12,7 +12,12 @@ from app.artifacts import downloadable_files, prepare_task_directory, task_direc
 from app.config import load_settings
 from app.db import TaskStore
 from app.task_followup import build_followup_prompt, read_final_output, read_log_tail
-from app.telegram_utils import is_authorized, split_telegram_message
+from app.telegram_utils import (
+    COMMAND_HELP,
+    build_help_message,
+    is_authorized,
+    split_telegram_message,
+)
 from app.worker import Worker
 
 
@@ -47,6 +52,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Codex Telegram Agent is online.\nchat_id={chat.id}\nstatus={status}"
     )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message:
+        await update.message.reply_text(build_help_message())
 
 
 async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -259,6 +269,12 @@ async def continue_task(
 
 
 async def post_init(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [
+            BotCommand(command=command, description=description)
+            for command, _, description in COMMAND_HELP
+        ]
+    )
     worker = Worker(settings, store, application.bot)
     application.bot_data["worker"] = worker
     application.bot_data["worker_task"] = asyncio.create_task(worker.run_forever())
@@ -285,6 +301,7 @@ def main() -> None:
         .build()
     )
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("run", run))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("file", file))

@@ -27,6 +27,7 @@ Telegram 使用者
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
 - 支援 `/continue <task_id> <後續問題>` 延伸已完成的任務。
 - 支援 `/file <task_id>` 重新下載 final output 與 artifacts。
+- 支援 `/help` 列出所有目前可用的指令與功能。
 - 下載時驗證 task 所屬 chat id，避免跨使用者讀取。
 - 啟動時自動 migration 既有 SQLite schema。
 
@@ -93,6 +94,7 @@ tasks/
 
 ```text
 /start
+/help
 /run <task prompt>
 /status
 /file <task_id>
@@ -102,6 +104,9 @@ tasks/
 ```
 
 `/start` 會回傳目前 chat id 與授權狀態，方便第一次設定 `ALLOWED_CHAT_IDS`。
+
+`/help` 會列出所有目前支援的指令、參數格式與功能說明，並同步更新
+Telegram 的 Bot 指令選單。
 
 `/run <task prompt>` 會建立新 Task 並立即回覆 task id。
 
