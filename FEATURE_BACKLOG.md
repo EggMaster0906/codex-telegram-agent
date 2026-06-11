@@ -13,7 +13,7 @@
 - [x] Task / Turn 分層與獨立執行紀錄
 - [x] Telegram 文字結果與指定附件交付
 - [x] `/result`、`/log`、`/file` 與 `/status`
-- [ ] Telegram 附件輸入
+- [x] Telegram 附件輸入
 - [ ] 任務取消
 - [ ] Artifact metadata 與 `/files`
 - [ ] 多 workspace 管理
@@ -155,9 +155,9 @@ tasks/
 - 支援 `/files <task_id>` 列出指定任務可下載的產物。
 - 加入 Telegram 檔案大小檢查與超過限制時的替代下載方式。
 
-## 3. Telegram 附件輸入（待開發）
+## 3. Telegram 附件輸入（已完成）
 
-狀態：尚未開始
+完成日期：2026-06-12
 
 ### 背景
 
@@ -179,20 +179,25 @@ tasks/
 先傳送附件，再透過指令或後續訊息補充 prompt
 ```
 
-### 初步設計
+### 已完成行為
 
-- 在 Bot 註冊 Telegram 文件、圖片等附件類型的 message handler。
-- 建立 Task 時保存附件至獨立的輸入目錄，例如
-  `tasks/task-000001/inputs/`。
-- 將附件本機路徑、原始檔名、檔案類型與使用者 prompt 一併提供給 Codex。
-- 支援附件搭配 caption 直接建立 Task。
-- 確保附件只能由原 Telegram chat 建立與存取。
-- 檢查檔案大小、檔名與 MIME type，拒絕不支援或超過限制的附件。
-- 避免路徑穿越、檔名衝突與覆寫既有 Task 檔案。
-- 補上附件下載、Task 建立、權限檢查與錯誤處理測試。
+- 支援 Telegram 文件、圖片、音訊、影片、動畫、語音、視訊留言與貼圖。
+- 附件有 caption 時以 caption 作為任務說明；沒有 caption 時使用預設附件
+  處理指示，使用者可在同一 session 的下一則文字繼續補充需求。
+- 有作用中 session 時建立新的 Turn；否則建立新的 Task/session。
+- 附件保存於
+  `tasks/task-XXXXXX/turn-XXXXXX/inputs/`，並將絕對路徑加入該輪 prompt。
+- 原始檔名會移除路徑與控制字元，重名檔案自動加上流水號。
+- Turn 在下載期間使用 `uploading` 狀態，完整下載並寫入 prompt 後才進入
+  `pending`，避免 worker 提前讀取不完整檔案。
+- Codex sandbox command 會將該輪 `inputs/` 加入可存取目錄。
+- 超過 Telegram Bot API 20 MB 下載上限的附件會直接提示使用者，不建立 Turn。
 
-### 待確認事項
+### 第一版實作決策
 
-- 第一版要支援的附件類型與檔案大小上限。
-- 多個附件應合併為單一 Task，或每個附件各自建立 Task。
-- 沒有 caption 的附件要立即建立 Task，或等待使用者補充 prompt。
+- 每則 Telegram 附件訊息建立一個 Turn；媒體群組中的各附件會依序建立
+  多個 Turn，暫不合併為單一執行。
+- 沒有 caption 時立即使用預設附件處理 prompt 排入佇列，不等待下一則訊息。
+- 後續普通文字會接續同一個 session，可再補充附件處理需求。
+- 使用 Telegram 雲端 Bot API 的 20 MB 下載上限；尚未導入 Local Bot API
+  Server 或替代下載管道。

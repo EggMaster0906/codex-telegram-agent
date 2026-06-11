@@ -30,6 +30,9 @@ def build_help_message() -> str:
         f"{usage}\n{description}"
         for _, usage, description in COMMAND_HELP
     )
+    sections.append(
+        "可直接傳送文件、圖片或其他附件，並用 caption 說明處理需求。"
+    )
     sections.append("任務相關指令僅限已授權的 chat 使用。")
     return "\n\n".join(sections)
 

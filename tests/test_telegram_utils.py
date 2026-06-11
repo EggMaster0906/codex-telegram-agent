@@ -43,6 +43,7 @@ class TelegramUtilsTests(unittest.TestCase):
         for _, usage, description in COMMAND_HELP:
             self.assertIn(usage, message)
             self.assertIn(description, message)
+        self.assertIn("caption", message)
 
 
 if __name__ == "__main__":

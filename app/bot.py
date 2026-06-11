@@ -13,11 +13,20 @@ from telegram.ext import (
     filters,
 )
 
+from app.attachments import (
+    DEFAULT_ATTACHMENT_PROMPT,
+    MAX_TELEGRAM_DOWNLOAD_BYTES,
+    attachment_from_message,
+    available_input_path,
+    build_attachment_prompt,
+    input_directory,
+)
 from app.artifacts import (
     downloadable_files,
     prepare_task_directory,
     task_directory,
     turn_directory,
+    write_prompt,
 )
 from app.config import load_settings
 from app.db import TaskStore
@@ -158,6 +167,77 @@ async def handle_message(
     prepare_task_directory(turn_dir, prompt)
     store.set_turn_dir(turn_id, turn_dir)
     await update.message.reply_text(f"Task #{task.id} follow-up queued.")
+
+
+async def handle_attachment(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+    if update.message is None:
+        return
+
+    attachment = attachment_from_message(update.message)
+    if attachment is None:
+        await update.message.reply_text("無法辨識這個附件類型。")
+        return
+    if (
+        attachment.file_size is not None
+        and attachment.file_size > MAX_TELEGRAM_DOWNLOAD_BYTES
+    ):
+        await update.message.reply_text(
+            "附件超過 Telegram Bot API 可下載的 20 MB 上限。"
+        )
+        return
+
+    chat = update.effective_chat
+    prompt = (update.message.caption or "").strip() or DEFAULT_ATTACHMENT_PROMPT
+    task = store.get_active_task(
+        chat.id,
+        settings.session_timeout_seconds,
+    )
+    if task is None:
+        task_id, turn_id = store.create_session(
+            chat.id,
+            prompt,
+            settings.default_workspace,
+            initial_status="uploading",
+        )
+        queue_message = f"Task #{task_id} attachment queued as a new session."
+    else:
+        task_id = task.id
+        turn_id = store.create_turn(
+            task_id,
+            prompt,
+            initial_status="uploading",
+        )
+        queue_message = f"Task #{task_id} attachment follow-up queued."
+
+    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_id)
+    prepare_task_directory(turn_dir, prompt)
+    store.set_turn_dir(turn_id, turn_dir)
+    destination = available_input_path(
+        input_directory(turn_dir),
+        attachment.filename,
+    )
+
+    try:
+        telegram_file = await context.bot.get_file(attachment.file_id)
+        await telegram_file.download_to_drive(custom_path=destination)
+        full_prompt = build_attachment_prompt(prompt, [destination.resolve()])
+        write_prompt(turn_dir, full_prompt)
+        store.queue_uploaded_turn(turn_id, task_id, full_prompt)
+    except (OSError, RuntimeError, TelegramError) as exc:
+        destination.unlink(missing_ok=True)
+        message = f"附件下載失敗：{exc}"
+        store.mark_turn_failed(turn_id, task_id, message)
+        await update.message.reply_text(f"Task #{task_id} {message}")
+        return
+
+    await update.message.reply_text(
+        f"{queue_message}\n已接收：{destination.name}"
+    )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -379,6 +459,9 @@ def main() -> None:
     application.add_handler(CommandHandler("continue", continue_task))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+    application.add_handler(
+        MessageHandler(filters.ATTACHMENT, handle_attachment)
     )
     application.run_polling()
 

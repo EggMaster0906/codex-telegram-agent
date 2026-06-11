@@ -34,6 +34,7 @@ def build_codex_command(
     output_path: Path,
     prompt: str,
     session_id: str | None,
+    input_dir: Path | None = None,
 ) -> list[str]:
     command = [
         codex_bin,
@@ -43,10 +44,16 @@ def build_codex_command(
         "--skip-git-repo-check",
         "--add-dir",
         str(artifact_dir),
-        "--json",
-        "--output-last-message",
-        str(output_path),
     ]
+    if input_dir is not None and input_dir.is_dir():
+        command.extend(["--add-dir", str(input_dir)])
+    command.extend(
+        [
+            "--json",
+            "--output-last-message",
+            str(output_path),
+        ]
+    )
     if session_id:
         command.extend(["resume", session_id])
     command.append(prompt)
@@ -63,6 +70,7 @@ async def run_codex(
     log_path: Path,
     output_path: Path,
     timeout_seconds: int,
+    input_dir: Path | None = None,
     session_id: str | None = None,
 ) -> CodexResult:
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +101,7 @@ async def run_codex(
         codex_bin=codex_bin,
         sandbox_mode=sandbox_mode,
         artifact_dir=artifact_dir,
+        input_dir=input_dir,
         output_path=output_path,
         prompt=prompt + artifact_instruction,
         session_id=session_id,

@@ -26,6 +26,7 @@ class CodexRunnerTests(unittest.TestCase):
             "codex_bin": "codex",
             "sandbox_mode": "workspace-write",
             "artifact_dir": Path("/tmp/artifacts"),
+            "input_dir": None,
             "output_path": Path("/tmp/final.md"),
             "prompt": "do the work",
         }
@@ -53,6 +54,19 @@ class CodexRunnerTests(unittest.TestCase):
             resume_command[-3:],
             ["resume", "session-123", "do the work"],
         )
+
+    def test_adds_existing_input_directory(self) -> None:
+        input_dir = Path("/tmp")
+        command = build_codex_command(
+            codex_bin="codex",
+            sandbox_mode="workspace-write",
+            artifact_dir=Path("/tmp/artifacts"),
+            input_dir=input_dir,
+            output_path=Path("/tmp/final.md"),
+            prompt="inspect attachment",
+            session_id=None,
+        )
+        self.assertIn(str(input_dir), command)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,9 @@ Telegram 使用者
 - 只接受 `ALLOWED_CHAT_IDS` 內的 Telegram chat。
 - `/new <prompt>` 建立新的 Task、Turn 與 Codex session。
 - 同一 Telegram chat 的普通文字會接續目前作用中的 Task。
+- 支援接收文件、圖片與其他 Telegram 附件，保存至對應 Task/Turn 的
+  `inputs/` 後交給 Codex。
+- Telegram Bot API 可下載附件上限為 20 MB，超過時不建立 Turn。
 - session 使用 24 小時滑動期限；每次接受新訊息時重新計時。
 - `/end` 停用目前 session，`/continue <task_id>` 可恢復已結束或逾時的 session。
 - 使用 SQLite 保存 Task、Turn、Codex session ID、狀態、workspace 與輸出路徑。
@@ -45,12 +48,13 @@ Telegram 使用者
 4. Worker 將該輪改為 `running` 並呼叫 `codex exec --json`。
 5. Worker 從 JSONL 事件保存 Codex session ID。
 6. 使用者在 24 小時內傳送普通文字時，Bot 建立新的 Turn。
-7. Worker 使用 `codex exec resume <session_id>` 接續同一段對話。
-8. 每次接受新訊息時，24 小時閒置期限重新計算。
-9. `/new` 會停用舊 session；`/end` 會結束目前 session。
-10. `/continue <task_id>` 會將後續普通文字切換至指定舊 session。
-11. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Turn 的 `artifacts/`。
-12. 成功時以 Telegram Markdown 回傳文字結果，並只自動傳送 manifest
+7. 使用者傳送附件時，Bot 先完整下載至該 Turn 的 `inputs/`，再排入 worker。
+8. Worker 使用 `codex exec resume <session_id>` 接續同一段對話。
+9. 每次接受新訊息時，24 小時閒置期限重新計算。
+10. `/new` 會停用舊 session；`/end` 會結束目前 session。
+11. `/continue <task_id>` 會將後續普通文字切換至指定舊 session。
+12. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Turn 的 `artifacts/`。
+13. 成功時以 Telegram Markdown 回傳文字結果，並只自動傳送 manifest
     指定的 artifacts。
 
 ### 使用範例
@@ -118,6 +122,7 @@ codex-telegram-agent/
     task-000001/
       turn-000001/
         prompt.txt        # 本輪訊息
+        inputs/           # 使用者由 Telegram 上傳的附件
         task.log          # 本輪完整執行 log
         final.md          # 本輪 Codex 最終回覆
         artifacts/

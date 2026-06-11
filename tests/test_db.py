@@ -129,6 +129,30 @@ class TaskStoreTests(unittest.TestCase):
                 before,
             )
 
+    def test_uploaded_turn_is_not_pending_until_queued(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TaskStore(Path(temp_dir) / "tasks.sqlite3")
+            store.init()
+            task_id, turn_id = store.create_session(
+                123,
+                "inspect attachment",
+                Path("/tmp"),
+                initial_status="uploading",
+            )
+
+            self.assertIsNone(store.next_pending_turn())
+            store.queue_uploaded_turn(
+                turn_id,
+                task_id,
+                "inspect attachment\n\n- /tmp/report.pdf",
+            )
+
+            turn = store.next_pending_turn()
+            self.assertIsNotNone(turn)
+            self.assertEqual(turn.id, turn_id)
+            self.assertIn("/tmp/report.pdf", turn.prompt)
+            self.assertEqual(store.get_task(task_id, 123).status, "pending")
+
 
 if __name__ == "__main__":
     unittest.main()

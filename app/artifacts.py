@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.attachments import INPUTS_DIR_NAME
 from app.db import Task
 
 
@@ -24,8 +25,13 @@ def turn_directory(tasks_dir: Path, task_id: int, turn_id: int) -> Path:
 def prepare_task_directory(task_dir: Path, prompt: str) -> Path:
     artifact_dir = task_dir / ARTIFACTS_DIR_NAME
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / PROMPT_NAME).write_text(prompt + "\n", encoding="utf-8")
+    write_prompt(task_dir, prompt)
     return artifact_dir
+
+
+def write_prompt(task_dir: Path, prompt: str) -> None:
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / PROMPT_NAME).write_text(prompt + "\n", encoding="utf-8")
 
 
 def artifact_files(task: Task) -> list[Path]:
@@ -43,11 +49,13 @@ def artifact_files(task: Task) -> list[Path]:
     }
     files = []
     for path in task_dir.rglob("*"):
+        relative_path = path.relative_to(task_dir)
         if (
             path.is_file()
             and not path.is_symlink()
             and path.resolve() not in excluded
-            and not any(part.startswith(".") for part in path.relative_to(task_dir).parts)
+            and relative_path.parts[0] != INPUTS_DIR_NAME
+            and not any(part.startswith(".") for part in relative_path.parts)
         ):
             files.append(path)
     return sorted(

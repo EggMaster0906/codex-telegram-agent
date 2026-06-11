@@ -150,6 +150,8 @@ class TaskStore:
         chat_id: int,
         prompt: str,
         workspace_path: Path,
+        *,
+        initial_status: str = "pending",
     ) -> tuple[int, int]:
         now = utc_now()
         with self.connect() as conn:
@@ -167,26 +169,51 @@ class TaskStore:
                     chat_id, prompt, status, workspace_path, session_status,
                     last_activity_at, created_at
                 )
-                values (?, ?, 'pending', ?, 'active', ?, ?)
+                values (?, ?, ?, ?, 'active', ?, ?)
                 """,
-                (chat_id, prompt, str(workspace_path), now, now),
+                (
+                    chat_id,
+                    prompt,
+                    initial_status,
+                    str(workspace_path),
+                    now,
+                    now,
+                ),
             )
             task_id = int(cursor.lastrowid)
-            turn_id = self._insert_turn(conn, task_id, prompt, now)
+            turn_id = self._insert_turn(
+                conn,
+                task_id,
+                prompt,
+                now,
+                initial_status,
+            )
             return task_id, turn_id
 
-    def create_turn(self, task_id: int, prompt: str) -> int:
+    def create_turn(
+        self,
+        task_id: int,
+        prompt: str,
+        *,
+        initial_status: str = "pending",
+    ) -> int:
         now = utc_now()
         with self.connect() as conn:
-            turn_id = self._insert_turn(conn, task_id, prompt, now)
+            turn_id = self._insert_turn(
+                conn,
+                task_id,
+                prompt,
+                now,
+                initial_status,
+            )
             conn.execute(
                 """
                 update tasks
-                set status = 'pending', error_message = null,
+                set status = ?, error_message = null,
                     last_activity_at = ?
                 where id = ?
                 """,
-                (now, task_id),
+                (initial_status, now, task_id),
             )
             return turn_id
 
@@ -196,15 +223,40 @@ class TaskStore:
         task_id: int,
         prompt: str,
         created_at: str,
+        status: str = "pending",
     ) -> int:
         cursor = conn.execute(
             """
             insert into task_turns (task_id, prompt, status, created_at)
-            values (?, ?, 'pending', ?)
+            values (?, ?, ?, ?)
             """,
-            (task_id, prompt, created_at),
+            (task_id, prompt, status, created_at),
         )
         return int(cursor.lastrowid)
+
+    def queue_uploaded_turn(
+        self,
+        turn_id: int,
+        task_id: int,
+        prompt: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                update task_turns
+                set prompt = ?, status = 'pending'
+                where id = ? and task_id = ? and status = 'uploading'
+                """,
+                (prompt, turn_id, task_id),
+            )
+            conn.execute(
+                """
+                update tasks
+                set status = 'pending', error_message = null
+                where id = ?
+                """,
+                (task_id,),
+            )
 
     def next_pending_turn(self) -> TaskTurn | None:
         with self.connect() as conn:

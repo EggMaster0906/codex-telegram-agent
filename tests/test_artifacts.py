@@ -27,12 +27,15 @@ class ArtifactTests(unittest.TestCase):
             report_path = artifact_dir / "report.pdf"
             direct_output_path = task_dir / "preview.png"
             hidden_path = artifact_dir / ".internal"
+            input_path = task_dir / "inputs" / "source.pdf"
 
             log_path.write_text("log", encoding="utf-8")
             output_path.write_text("done", encoding="utf-8")
             report_path.write_bytes(b"pdf")
             direct_output_path.write_bytes(b"png")
             hidden_path.write_text("secret", encoding="utf-8")
+            input_path.parent.mkdir()
+            input_path.write_bytes(b"user upload")
 
             task = self.make_task(task_dir, log_path, output_path)
 

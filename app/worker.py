@@ -6,6 +6,7 @@ from pathlib import Path
 from telegram import Bot
 from telegram.error import TelegramError
 
+from app.attachments import input_directory
 from app.artifacts import (
     FINAL_OUTPUT_NAME,
     TASK_LOG_NAME,
@@ -84,6 +85,7 @@ class Worker:
             prompt=turn.prompt,
             workspace_path=Path(task.workspace_path),
             artifact_dir=artifact_dir,
+            input_dir=input_directory(turn_dir),
             log_path=log_path,
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
@@ -144,6 +146,7 @@ class Worker:
             prompt=task.prompt,
             workspace_path=Path(task.workspace_path),
             artifact_dir=artifact_dir,
+            input_dir=input_directory(task_dir),
             log_path=log_path,
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
