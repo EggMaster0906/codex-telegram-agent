@@ -20,6 +20,7 @@ from app.attachments import (
     available_input_path,
     build_attachment_prompt,
     input_directory,
+    parse_attachment_caption,
 )
 from app.artifacts import (
     downloadable_files,
@@ -192,11 +193,13 @@ async def handle_attachment(
         return
 
     chat = update.effective_chat
-    prompt = (update.message.caption or "").strip() or DEFAULT_ATTACHMENT_PROMPT
-    task = store.get_active_task(
-        chat.id,
-        settings.session_timeout_seconds,
-    )
+    force_new_session, prompt = parse_attachment_caption(update.message.caption)
+    task = None
+    if not force_new_session:
+        task = store.get_active_task(
+            chat.id,
+            settings.session_timeout_seconds,
+        )
     if task is None:
         task_id, turn_id = store.create_session(
             chat.id,

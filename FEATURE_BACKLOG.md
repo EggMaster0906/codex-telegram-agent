@@ -184,6 +184,8 @@ tasks/
 - 支援 Telegram 文件、圖片、音訊、影片、動畫、語音、視訊留言與貼圖。
 - 附件有 caption 時以 caption 作為任務說明；沒有 caption 時使用預設附件
   處理指示，使用者可在同一 session 的下一則文字繼續補充需求。
+- caption 以 `/new` 或 `/new@BotName` 開頭時，強制建立新的 Task/session，
+  並只將指令後方文字作為附件處理 prompt。
 - 有作用中 session 時建立新的 Turn；否則建立新的 Task/session。
 - 附件保存於
   `tasks/task-XXXXXX/turn-XXXXXX/inputs/`，並將絕對路徑加入該輪 prompt。

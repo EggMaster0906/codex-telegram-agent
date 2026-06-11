@@ -21,6 +21,8 @@ Telegram 使用者
 - 同一 Telegram chat 的普通文字會接續目前作用中的 Task。
 - 支援接收文件、圖片與其他 Telegram 附件，保存至對應 Task/Turn 的
   `inputs/` 後交給 Codex。
+- 附件 caption 以 `/new` 或 `/new@BotName` 開頭時會強制建立新的
+  Task/session；其餘附件會接續目前作用中的 session。
 - Telegram Bot API 可下載附件上限為 20 MB，超過時不建立 Turn。
 - session 使用 24 小時滑動期限；每次接受新訊息時重新計時。
 - `/end` 停用目前 session，`/continue <task_id>` 可恢復已結束或逾時的 session。
@@ -370,7 +372,6 @@ cd /home/ai-agent/codex-telegram-agent
 
 ## 待開發功能
 
-- Telegram 附件輸入。
 - 任務取消。
 - `/files <task_id>` artifact 清單。
 - Artifact metadata 資料表。

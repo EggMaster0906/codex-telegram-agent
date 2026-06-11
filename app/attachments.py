@@ -10,6 +10,10 @@ INPUTS_DIR_NAME = "inputs"
 DEFAULT_ATTACHMENT_PROMPT = "請檢視並處理使用者提供的附件。"
 MAX_TELEGRAM_DOWNLOAD_BYTES = 20 * 1024 * 1024
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+NEW_SESSION_CAPTION = re.compile(
+    r"^/new(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,16 @@ def build_attachment_prompt(prompt: str, paths: list[Path]) -> str:
     ]
     lines.extend(f"- {path}" for path in paths)
     return "\n".join(lines)
+
+
+def parse_attachment_caption(caption: str | None) -> tuple[bool, str]:
+    text = (caption or "").strip()
+    match = NEW_SESSION_CAPTION.fullmatch(text)
+    if match is None:
+        return False, text or DEFAULT_ATTACHMENT_PROMPT
+
+    prompt = (match.group(1) or "").strip()
+    return True, prompt or DEFAULT_ATTACHMENT_PROMPT
 
 
 def sanitize_filename(filename: str) -> str:

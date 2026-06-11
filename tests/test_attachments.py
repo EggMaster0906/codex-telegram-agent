@@ -9,6 +9,7 @@ from app.attachments import (
     attachment_from_message,
     available_input_path,
     build_attachment_prompt,
+    parse_attachment_caption,
     sanitize_filename,
 )
 
@@ -72,6 +73,24 @@ class AttachmentTests(unittest.TestCase):
         prompt = build_attachment_prompt("summarize this", [path])
         self.assertIn("summarize this", prompt)
         self.assertIn(str(path), prompt)
+
+    def test_parses_new_session_attachment_caption(self) -> None:
+        self.assertEqual(
+            parse_attachment_caption("/new summarize this PDF"),
+            (True, "summarize this PDF"),
+        )
+        self.assertEqual(
+            parse_attachment_caption("/new@EggMaster_Agent_bot\nsummarize this"),
+            (True, "summarize this"),
+        )
+        self.assertEqual(
+            parse_attachment_caption("/new"),
+            (True, "請檢視並處理使用者提供的附件。"),
+        )
+        self.assertEqual(
+            parse_attachment_caption("/newspaper article"),
+            (False, "/newspaper article"),
+        )
 
 
 if __name__ == "__main__":
