@@ -17,7 +17,7 @@ from app.artifacts import (
 from app.codex_runner import run_codex
 from app.config import Settings
 from app.db import Task, TaskStore, TaskTurn
-from app.telegram_utils import split_telegram_message
+from app.telegram_delivery import send_markdown_text
 
 
 class Worker:
@@ -100,8 +100,7 @@ class Worker:
                 if output_path.exists()
                 else "(empty output)"
             )
-            for chunk in split_telegram_message(final_text):
-                await self.bot.send_message(task.chat_id, chunk)
+            await send_markdown_text(self.bot, task.chat_id, final_text)
             completed_task = Task(
                 id=task.id,
                 chat_id=task.chat_id,
@@ -160,8 +159,7 @@ class Worker:
                 else "(empty output)"
             )
             header = f"Task #{task.id} done.\n\n"
-            for chunk in split_telegram_message(header + final_text):
-                await self.bot.send_message(task.chat_id, chunk)
+            await send_markdown_text(self.bot, task.chat_id, header + final_text)
             completed_task = Task(
                 **{
                     **task.__dict__,

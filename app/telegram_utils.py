@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
+
 
 TELEGRAM_LIMIT = 4096
 SAFE_CHUNK_SIZE = 3600
+HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*$")
 COMMAND_HELP = (
     ("start", "/start", "顯示 Bot 狀態、chat ID 與授權狀態"),
     ("help", "/help", "列出目前支援的指令與功能"),
@@ -29,6 +32,28 @@ def build_help_message() -> str:
     )
     sections.append("任務相關指令僅限已授權的 chat 使用。")
     return "\n\n".join(sections)
+
+
+def prepare_telegram_markdown(text: str) -> str:
+    """Convert common Codex Markdown into Telegram's legacy Markdown subset."""
+    lines: list[str] = []
+    in_code_block = False
+
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_code_block = not in_code_block
+            lines.append(line)
+            continue
+
+        if not in_code_block:
+            heading = HEADING_PATTERN.match(line)
+            if heading:
+                line = f"*{heading.group(1)}*"
+            line = line.replace("**", "*").replace("~~", "")
+
+        lines.append(line)
+
+    return "\n".join(lines)
 
 
 def split_telegram_message(text: str) -> list[str]:

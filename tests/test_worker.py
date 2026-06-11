@@ -20,9 +20,15 @@ try:
 except ModuleNotFoundError:
     telegram_module = types.ModuleType("telegram")
     telegram_module.Bot = object
+    telegram_constants_module = types.ModuleType("telegram.constants")
+    telegram_constants_module.ParseMode = types.SimpleNamespace(
+        MARKDOWN="Markdown"
+    )
     telegram_error_module = types.ModuleType("telegram.error")
+    telegram_error_module.BadRequest = Exception
     telegram_error_module.TelegramError = Exception
     sys.modules["telegram"] = telegram_module
+    sys.modules["telegram.constants"] = telegram_constants_module
     sys.modules["telegram.error"] = telegram_error_module
 
 from app.codex_runner import CodexResult
@@ -34,9 +40,17 @@ from app.worker import Worker
 class FakeBot:
     def __init__(self) -> None:
         self.messages: list[tuple[int, str]] = []
+        self.parse_modes: list[str | None] = []
 
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        parse_mode: str | None = None,
+    ) -> None:
         self.messages.append((chat_id, text))
+        self.parse_modes.append(parse_mode)
 
     async def send_document(self, **kwargs: object) -> None:
         raise AssertionError("No document should be sent in this test")
@@ -104,6 +118,10 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 [text for _, text in bot.messages],
                 ["Task #1 started.", "done", "done"],
+            )
+            self.assertEqual(
+                bot.parse_modes,
+                [None, "Markdown", "Markdown"],
             )
 
     async def test_failed_first_turn_keeps_session_for_queued_followup(self) -> None:

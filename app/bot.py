@@ -22,6 +22,7 @@ from app.artifacts import (
 from app.config import load_settings
 from app.db import TaskStore
 from app.task_followup import read_final_output, read_log_tail
+from app.telegram_delivery import send_markdown_text
 from app.telegram_utils import (
     COMMAND_HELP,
     build_help_message,
@@ -253,8 +254,7 @@ async def result(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     message = f"Task #{task_id} result:\n\n{final_output}"
-    for chunk in split_telegram_message(message):
-        await update.message.reply_text(chunk)
+    await send_markdown_text(context.bot, chat.id, message)
 
 
 async def log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

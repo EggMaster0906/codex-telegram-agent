@@ -26,7 +26,7 @@ Telegram 使用者
 - 第一輪使用 `codex exec --json`，後續輪使用
   `codex exec resume <session_id>`。
 - 每個 Turn 使用獨立目錄保存 prompt、log、final output 與 artifacts。
-- 任務完成後將 final output 分段回傳 Telegram。
+- 任務完成後將 final output 以 Telegram Markdown 格式分段回傳。
 - 一般任務預設只回傳 Telegram 文字。
 - 僅自動傳送 `.delivery.json` 明確指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
@@ -50,7 +50,8 @@ Telegram 使用者
 9. `/new` 會停用舊 session；`/end` 會結束目前 session。
 10. `/continue <task_id>` 會將後續普通文字切換至指定舊 session。
 11. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Turn 的 `artifacts/`。
-12. 成功時回傳文字結果，並只自動傳送 manifest 指定的 artifacts。
+12. 成功時以 Telegram Markdown 回傳文字結果，並只自動傳送 manifest
+    指定的 artifacts。
 
 ### 使用範例
 
@@ -192,7 +193,9 @@ prompt 摘要。
 `.delivery.json` 明確列出的附件；一般問答即使意外建立 Markdown 檔，也不會
 自動作為附件傳送。
 
-`/result <task_id>` 會將指定任務最新一輪的 final output 分段回傳。
+`/result <task_id>` 會將指定任務最新一輪的 final output 以 Telegram
+Markdown 格式分段回傳。若 Telegram 無法解析該段格式，會自動退回純文字，
+避免結果傳送失敗。
 
 `/log <task_id>` 會回傳指定任務最新一輪最近 80 行 log，最多 12,000 字元。
 
