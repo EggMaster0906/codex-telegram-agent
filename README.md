@@ -10,40 +10,93 @@ Telegram 使用者
   -> SQLite 任務佇列
   -> 背景 Worker
   -> Codex CLI
-  -> Task 獨立目錄
+  -> Task / Turn 獨立目錄
   -> Telegram 文字與檔案回傳
 ```
 
-## 現有功能
+## 目前功能
 
 - 只接受 `ALLOWED_CHAT_IDS` 內的 Telegram chat。
-- 使用 SQLite 保存 prompt、狀態、workspace 與輸出路徑。
-- 背景 worker 依序執行 pending tasks。
-- 透過 Codex CLI 非互動模式執行任務。
-- 每個 Task 使用獨立目錄保存 prompt、log、final output 與 artifacts。
+- `/new <prompt>` 建立新的 Task、Turn 與 Codex session。
+- 同一 Telegram chat 的普通文字會接續目前作用中的 Task。
+- session 使用 24 小時滑動期限；每次接受新訊息時重新計時。
+- `/end` 停用目前 session，`/continue <task_id>` 可恢復已結束或逾時的 session。
+- 使用 SQLite 保存 Task、Turn、Codex session ID、狀態、workspace 與輸出路徑。
+- 背景 worker 依建立順序執行 pending Turn，同一 session 不會並行 resume。
+- 第一輪使用 `codex exec --json`，後續輪使用
+  `codex exec resume <session_id>`。
+- 每個 Turn 使用獨立目錄保存 prompt、log、final output 與 artifacts。
 - 任務完成後將 final output 分段回傳 Telegram。
 - 一般任務預設只回傳 Telegram 文字。
-- 僅自動傳送 Agent 在 delivery manifest 中指定的 artifacts。
+- 僅自動傳送 `.delivery.json` 明確指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
-- 支援 `/continue <task_id> <後續問題>` 延伸已完成的任務。
 - 支援 `/file <task_id>` 重新下載 final output 與 artifacts。
+- 保留 `/run <prompt>` 作為舊式單次任務相容指令。
 - 支援 `/help` 列出所有目前可用的指令與功能。
-- 下載時驗證 task 所屬 chat id，避免跨使用者讀取。
+- 所有 Task ID 操作都驗證所屬 chat ID，避免跨 chat 存取。
 - 啟動時自動 migration 既有 SQLite schema。
 
-## 任務流程
+## 對話流程
 
-1. 使用者透過 `/run <prompt>` 建立任務。
-2. Bot 將任務寫入 SQLite，狀態設為 `pending`。
-3. Bot 建立 `tasks/task-XXXXXX/` 與 `artifacts/`。
-4. Worker 將任務改為 `running` 並呼叫 Codex CLI。
-5. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Task 的 `artifacts/`。
-6. Codex 寫入 `.delivery.json`，聲明本次為純文字或列出應交付附件。
-7. Worker 保存完整 log 與 Codex 最終回覆。
-8. 成功時回傳文字結果，並只自動傳送 manifest 指定的 artifacts。
-9. 使用者之後可查詢結果與 log，或建立保留原始上下文的後續任務。
-10. 使用者仍可透過 `/file <task_id>` 重新下載所有任務產物。
+1. 使用者透過 `/new <prompt>` 建立新的 Task 與 Codex session。
+2. Bot 將第一輪訊息寫入 SQLite，狀態設為 `pending`。
+3. Bot 建立 `tasks/task-XXXXXX/turn-XXXXXX/` 與 `artifacts/`。
+4. Worker 將該輪改為 `running` 並呼叫 `codex exec --json`。
+5. Worker 從 JSONL 事件保存 Codex session ID。
+6. 使用者在 24 小時內傳送普通文字時，Bot 建立新的 Turn。
+7. Worker 使用 `codex exec resume <session_id>` 接續同一段對話。
+8. 每次接受新訊息時，24 小時閒置期限重新計算。
+9. `/new` 會停用舊 session；`/end` 會結束目前 session。
+10. `/continue <task_id>` 會將後續普通文字切換至指定舊 session。
+11. Codex 在原 workspace 工作；只有檔案型成果才寫入該 Turn 的 `artifacts/`。
+12. 成功時回傳文字結果，並只自動傳送 manifest 指定的 artifacts。
+
+### 使用範例
+
+```text
+使用者：/new 幫我檢查登入功能
+Bot：Task #100 queued as a new session.
+Bot：Task #100 started.
+Bot：檢查完成……
+
+使用者：接著修正剛才找到的問題
+Bot：Task #100 follow-up queued.
+Bot：修正完成……
+
+使用者：/end
+Bot：Task #100 session ended.
+
+使用者：/continue 100
+Bot：Task #100 session resumed. 後續普通文字會接續此 session。
+
+使用者：再補上測試
+Bot：Task #100 follow-up queued.
+Bot：測試已補上……
+```
+
+### Session 規則
+
+- 每個 Telegram chat 同一時間只有一個作用中的 Task/session。
+- `/new` 會停用原本作用中的 session，但不刪除其紀錄。
+- 普通文字只會送往目前作用中的 session。
+- 每次普通文字被接受並建立 Turn 時，24 小時期限重新起算。
+- 超過 24 小時後，下一則普通文字不會自動建立新 session；Bot 會要求使用
+  `/new` 或 `/continue <task_id>`。
+- `/continue <task_id>` 會停用目前 session，並將指定 Task 設為作用中，同時
+  重新起算 24 小時期限。
+- `/end` 只停止後續普通文字自動接續，不會取消已排隊或正在執行的 Turn。
+- 使用者在上一輪尚未完成時傳送的新訊息會排入佇列，依序使用同一個 Codex
+  session 執行。
+- session 逾時或 `/end` 都不會刪除 Codex session ID、log、結果或附件。
+
+### Task 與 Turn
+
+- `Task ID` 代表一段可恢復的對話，對使用者保持固定。
+- `Turn` 代表該對話中的一次使用者訊息與一次 Codex 執行。
+- 每個 Turn 分別保存狀態、prompt、log、final output 與 artifacts。
+- `/status` 顯示 Task 的執行狀態與 session 狀態，例如
+  `done [active]`、`done [ended]` 或 `done [expired]`。
 
 ## 專案結構
 
@@ -56,24 +109,27 @@ codex-telegram-agent/
     db.py               # SQLite schema and task operations
     config.py           # Environment configuration
     codex_runner.py     # Codex CLI subprocess wrapper
-    task_followup.py    # Task 結果、log 與後續提問上下文
+    task_followup.py    # Task 結果與 log 讀取
     telegram_utils.py   # Telegram message helpers
   data/
     tasks.sqlite3       # Runtime database
   tasks/
     task-000001/
-      prompt.txt        # 原始任務內容
-      task.log          # 完整執行 log
-      final.md          # Codex 最終回覆
-      artifacts/
-        .delivery.json  # 純文字或自動附件交付清單
-        ...             # 圖片、文件等使用者產物
+      turn-000001/
+        prompt.txt        # 本輪訊息
+        task.log          # 本輪完整執行 log
+        final.md          # 本輪 Codex 最終回覆
+        artifacts/
+          .delivery.json  # 純文字或自動附件交付清單
+          ...             # 圖片、文件等使用者產物
   systemd/
     codex-telegram-agent.service  # 尚未安裝的 systemd unit 範本
   tests/
     test_artifacts.py
+    test_codex_runner.py
     test_db.py
     test_task_followup.py
+    test_worker.py
   .gitignore            # 排除 secrets 與 runtime data
   .env                  # Runtime secrets and local configuration
   .env.example          # Environment template
@@ -99,12 +155,14 @@ tasks/
 ```text
 /start
 /help
+/new <task prompt>
+/end
 /run <task prompt>
 /status
 /file <task_id>
 /result <task_id>
 /log <task_id>
-/continue <task_id> <follow-up question>
+/continue <task_id>
 ```
 
 `/start` 會回傳目前 chat id 與授權狀態，方便第一次設定 `ALLOWED_CHAT_IDS`。
@@ -112,22 +170,31 @@ tasks/
 `/help` 會列出所有目前支援的指令、參數格式與功能說明，並同步更新
 Telegram 的 Bot 指令選單。
 
-`/run <task prompt>` 會建立新 Task 並立即回覆 task id。
+`/new <task prompt>` 會建立新的 Task 與 Codex session。後續直接傳送普通
+文字即可接續同一個 session。建立新 Task 時，原本作用中的 Task 會改為
+`ended`。每次接受新訊息後，24 小時閒置期限會重新計算。
 
-`/status` 會顯示目前 chat 最近五筆任務與狀態。
+`/end` 會結束目前作用中的 session，但不會刪除歷史紀錄，也不會取消已排隊
+或正在執行的 Turn。
+
+`/continue <task_id>` 會恢復指定 Task 的 Codex session，並停用目前其他
+作用中的 session。下一則普通文字會送往指定 session；此指令本身不會建立
+新的 Turn。
+
+`/run <task prompt>` 保留為相容指令，會建立獨立的舊式 Task；新流程建議使用
+`/new`。
+
+`/status` 會顯示目前 chat 最近五筆 Task 的執行狀態、session 狀態與初始
+prompt 摘要。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 下載，並傳送該 Task
-的 `final.md` 與所有 artifacts。新任務完成時只會自動傳送
+最新一輪的 `final.md` 與 artifacts。新任務完成時只會自動傳送
 `.delivery.json` 明確列出的附件；一般問答即使意外建立 Markdown 檔，也不會
 自動作為附件傳送。
 
-`/result <task_id>` 會將指定任務的 final output 分段回傳。
+`/result <task_id>` 會將指定任務最新一輪的 final output 分段回傳。
 
-`/log <task_id>` 會回傳指定任務最近 80 行 log，最多 12,000 字元。
-
-`/continue <task_id> <follow-up question>` 只接受已完成且有 final output 的
-任務。Bot 會將原始 prompt、前次 final output 與新問題組成新的 Task，
-沿用原本 workspace，並以 `parent_task_id` 保存任務追蹤關係。
+`/log <task_id>` 會回傳指定任務最新一輪最近 80 行 log，最多 12,000 字元。
 
 所有依 Task ID 查詢的指令都會驗證 task 所屬 chat id。
 
@@ -151,7 +218,11 @@ TASK_TIMEOUT_SECONDS=5400
 DATABASE_PATH=/home/ai-agent/codex-telegram-agent/data/tasks.sqlite3
 TASKS_DIR=/home/ai-agent/codex-telegram-agent/tasks
 WORKER_POLL_SECONDS=2
+SESSION_TIMEOUT_SECONDS=86400
 ```
+
+`SESSION_TIMEOUT_SECONDS` 預設為 `86400` 秒，也就是 24 小時。期限從
+`/new`、`/continue` 或最近一次被接受的普通文字開始計算。
 
 不要將真實 bot token 寫入 Git 或公開文件。
 
@@ -282,10 +353,16 @@ cd /home/ai-agent/codex-telegram-agent
 - Codex CLI 可在 Task `artifacts/` 內實際建立檔案。
 - `final.md`、artifact 掃描、SQLite migration 與 bot 重啟均正常。
 
+本次 session/Turn 功能另完成：
+
+- Codex JSONL `thread.started` session ID 解析測試。
+- 第一輪建立 session、後續 Turn 使用相同 session ID 的 worker 測試。
+- 24 小時滑動期限、session 切換、結束與恢復測試。
+- 舊 SQLite 資料庫 migration 測試，原有 Task 紀錄保持不變。
+
 ## 待開發功能
 
-- `/result <task_id>` 與 `/log <task_id>`。
-- `/continue <task_id>` 與 Codex session resume。
+- Telegram 附件輸入。
 - 任務取消。
 - `/files <task_id>` artifact 清單。
 - Artifact metadata 資料表。

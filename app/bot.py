@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from pathlib import Path
 
 from telegram import BotCommand, Update
 from telegram.error import TelegramError
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from app.artifacts import downloadable_files, prepare_task_directory, task_directory
+from app.artifacts import (
+    downloadable_files,
+    prepare_task_directory,
+    task_directory,
+    turn_directory,
+)
 from app.config import load_settings
 from app.db import TaskStore
-from app.task_followup import build_followup_prompt, read_final_output, read_log_tail
+from app.task_followup import read_final_output, read_log_tail
 from app.telegram_utils import (
     COMMAND_HELP,
     build_help_message,
@@ -76,6 +86,79 @@ async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Task #{task_id} queued.")
 
 
+async def new_session(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+
+    prompt = " ".join(context.args).strip()
+    if not prompt:
+        await update.message.reply_text("Usage: /new <task prompt>")
+        return
+
+    chat = update.effective_chat
+    task_id, turn_id = store.create_session(
+        chat.id,
+        prompt,
+        settings.default_workspace,
+    )
+    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_id)
+    prepare_task_directory(turn_dir, prompt)
+    store.set_turn_dir(turn_id, turn_dir)
+    await update.message.reply_text(f"Task #{task_id} queued as a new session.")
+
+
+async def end_session(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+
+    chat = update.effective_chat
+    task = store.end_active_task(chat.id)
+    if task is None:
+        await update.message.reply_text("目前沒有進行中的 session。")
+        return
+
+    await update.message.reply_text(f"Task #{task.id} session ended.")
+
+
+async def handle_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+    if update.message is None or update.message.text is None:
+        return
+
+    prompt = update.message.text.strip()
+    if not prompt:
+        return
+
+    chat = update.effective_chat
+    task = store.get_active_task(
+        chat.id,
+        settings.session_timeout_seconds,
+    )
+    if task is None:
+        await update.message.reply_text(
+            "目前沒有可接續的 session，或上一個 session 已閒置超過 24 小時。\n"
+            "請使用 /new <task prompt> 開始新對話，或使用 "
+            "/continue <task_id> 恢復舊對話。"
+        )
+        return
+
+    turn_id = store.create_turn(task.id, prompt)
+    turn_dir = turn_directory(settings.tasks_dir, task.id, turn_id)
+    prepare_task_directory(turn_dir, prompt)
+    store.set_turn_dir(turn_id, turn_dir)
+    await update.message.reply_text(f"Task #{task.id} follow-up queued.")
+
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update):
         return
@@ -86,7 +169,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No tasks yet.")
         return
 
-    lines = [f"#{task.id} {task.status}: {task.prompt[:80]}" for task in tasks]
+    lines = [
+        (
+            f"#{task.id} {task.status} [{task.session_status}]: "
+            f"{task.prompt[:80]}"
+        )
+        for task in tasks
+    ]
     await update.message.reply_text("\n".join(lines))
 
 
@@ -212,59 +301,37 @@ async def continue_task(
     if not await require_auth(update):
         return
 
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /continue <task_id> <follow-up question>")
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /continue <task_id>")
         return
 
     try:
-        parent_task_id = int(context.args[0])
+        task_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("Usage: /continue <task_id> <follow-up question>")
-        return
-
-    question = " ".join(context.args[1:]).strip()
-    if not question:
-        await update.message.reply_text("Usage: /continue <task_id> <follow-up question>")
+        await update.message.reply_text("Usage: /continue <task_id>")
         return
 
     chat = update.effective_chat
-    parent_task = store.get_task(parent_task_id, chat.id)
-    if parent_task is None:
-        await update.message.reply_text(f"Task #{parent_task_id} not found.")
+    task = store.get_task(task_id, chat.id)
+    if task is None:
+        await update.message.reply_text(f"Task #{task_id} not found.")
         return
 
-    if parent_task.status != "done":
+    if (
+        task.codex_session_id is None
+        and not (
+            task.status in {"pending", "running"}
+            and store.has_turns(task.id)
+        )
+    ):
         await update.message.reply_text(
-            f"Task #{parent_task_id} is not complete (status: {parent_task.status})."
+            f"Task #{task_id} 沒有可恢復的 Codex session。"
         )
         return
 
-    try:
-        final_output = read_final_output(parent_task)
-    except OSError as exc:
-        await update.message.reply_text(
-            f"Could not read Task #{parent_task_id} result: {exc}"
-        )
-        return
-
-    if final_output is None:
-        await update.message.reply_text(
-            f"Task #{parent_task_id} has no final output to continue from."
-        )
-        return
-
-    prompt = build_followup_prompt(parent_task, final_output, question)
-    task_id = store.create_task(
-        chat.id,
-        prompt,
-        Path(parent_task.workspace_path),
-        parent_task_id=parent_task.id,
-    )
-    task_dir = task_directory(settings.tasks_dir, task_id)
-    prepare_task_directory(task_dir, prompt)
-    store.set_task_dir(task_id, task_dir)
+    store.activate_task(task.id, chat.id)
     await update.message.reply_text(
-        f"Task #{task_id} queued as a follow-up to Task #{parent_task.id}."
+        f"Task #{task.id} session resumed. 後續普通文字會接續此 session。"
     )
 
 
@@ -302,12 +369,17 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("new", new_session))
+    application.add_handler(CommandHandler("end", end_session))
     application.add_handler(CommandHandler("run", run))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("file", file))
     application.add_handler(CommandHandler("result", result))
     application.add_handler(CommandHandler("log", log))
     application.add_handler(CommandHandler("continue", continue_task))
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
     application.run_polling()
 
 

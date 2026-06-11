@@ -18,6 +18,7 @@ class Settings:
     database_path: Path
     tasks_dir: Path
     worker_poll_seconds: float
+    session_timeout_seconds: int
 
 
 def _required(name: str) -> str:
@@ -45,4 +46,5 @@ def load_settings() -> Settings:
         database_path=Path(os.getenv("DATABASE_PATH", str(root / "data/tasks.sqlite3"))),
         tasks_dir=Path(os.getenv("TASKS_DIR", str(root / "tasks"))),
         worker_poll_seconds=float(os.getenv("WORKER_POLL_SECONDS", "2")),
+        session_timeout_seconds=int(os.getenv("SESSION_TIMEOUT_SECONDS", "86400")),
     )

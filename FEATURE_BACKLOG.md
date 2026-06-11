@@ -4,61 +4,90 @@
 
 ## 功能狀態總覽
 
-- [x] 根據 task id 追蹤後續提問（第一版）
-- [x] 透過 Telegram 將 output file 傳送給使用者
-- [ ] 讀取使用者透過 Telegram 傳送的附件
+- [x] Task ID 與 Codex session 綁定
+- [x] `/new` 建立新 session
+- [x] 普通文字自動接續作用中 session
+- [x] 24 小時滑動 session 期限
+- [x] `/end` 結束目前 session
+- [x] `/continue <task_id>` 恢復並切換 session
+- [x] Task / Turn 分層與獨立執行紀錄
+- [x] Telegram 文字結果與指定附件交付
+- [x] `/result`、`/log`、`/file` 與 `/status`
+- [ ] Telegram 附件輸入
+- [ ] 任務取消
+- [ ] Artifact metadata 與 `/files`
+- [ ] 多 workspace 管理
+- [ ] systemd 常駐服務
 
-## 1. 根據 task id 追蹤後續提問（第一版已完成）
+## 1. 多輪 Codex Session（已完成）
 
-完成日期：2026-06-10
+完成日期：2026-06-11
 
 ### 目標
 
-讓使用者可以針對指定 task id 查詢結果、查看 log，或接續同一個任務進行後續提問。
+讓使用者以 Task ID 代表一段可恢復的 Codex 對話。使用者以 `/new` 開始，
+後續直接傳送普通文字即可接續同一個 session。
 
-### 預期指令
-
-```text
-/result <task_id>
-/log <task_id>
-/continue <task_id> <後續問題>
-```
-
-### 初步設計
+### 已實作介面
 
 ```text
+/new <task prompt>
+普通文字
+/end
+/continue <task_id>
+/status
 /result <task_id>
-  讀取指定任務的 output_path，將 final output 分段回傳 Telegram。
-
 /log <task_id>
-  讀取指定任務的 log_path，回傳尾端摘要或最近 N 行 log。
-
-/continue <task_id> <後續問題>
-  第一版：讀取原 task prompt 與 final output，組成上下文後建立新 task。
-  第二版：解析並儲存 Codex session id，使用 codex exec resume 延續同一個 session。
+/file <task_id>
 ```
 
-### 已完成內容
+### 已完成行為
 
-- `/result <task_id>` 分段回傳指定任務的 final output。
-- `/log <task_id>` 回傳最近 80 行、最多 12,000 字元的執行 log。
-- `/continue <task_id> <後續問題>` 使用原 prompt、final output 與新問題建立
-  後續 Task。
-- 後續 Task 沿用原任務 workspace，並以 `parent_task_id` 保存追蹤鏈。
+- `/new <prompt>` 建立新的 Task、第一個 Turn 與作用中 session。
+- 建立新 session 時，原本作用中的 session 會改為 `ended`。
+- 普通文字會建立新的 Turn，並接續目前作用中的 Task。
+- 每次接受普通文字時更新 `last_activity_at`，重新計算 24 小時期限。
+- session 逾時後不自動建立新 session，而是提示使用 `/new` 或 `/continue`。
+- `/end` 將目前 session 設為 `ended`，但不取消既有 Turn。
+- `/continue <task_id>` 可恢復 `ended` 或 `expired` session，並停用其他
+  作用中的 session。
+- `/continue` 本身只切換作用中 session，不建立新的 Turn。
+- 第一輪透過 `codex exec --json` 執行，並解析 `thread.started` 的 session ID。
+- 後續 Turn 使用 `codex exec resume <session_id> <prompt>`。
+- 同一 session 的 Turn 依序排隊，不會同時 resume。
+- Task ID 在整段對話中保持不變，每則訊息使用獨立 Turn 保存執行紀錄。
 - 所有 Task ID 指令均驗證 Telegram chat id，禁止跨 chat 存取。
-- SQLite 啟動時自動 migration `parent_task_id` 與 `codex_session_id`。
-- 已預留 `codex_session_id`；Codex session resume 留待第二版實作。
+- SQLite 啟動時自動 migration session 欄位並建立 `task_turns`。
+- 既有 `/run` 保留為舊式單次任務相容指令。
 
-### 需要新增的資料欄位
+### 查詢與交付
+
+- `/status` 顯示最近五筆 Task 的執行狀態與 session 狀態。
+- `/result <task_id>` 分段回傳最新一輪 final output。
+- `/log <task_id>` 回傳最新一輪最近 80 行、最多 12,000 字元的 log。
+- `/file <task_id>` 傳送最新一輪 final output 與 artifacts。
+- final output 超過 Telegram 單則訊息限制時會自動分段。
+- 一般回答預設只交付文字。
+- 只有 `.delivery.json` 指定的 artifacts 會在完成時自動傳送。
+
+### 主要資料欄位
 
 ```text
 codex_session_id
-parent_task_id
+session_status
+last_activity_at
+task_turns
 ```
 
-`parent_task_id` 可用來建立任務追蹤鏈，例如 task #15 是從 task #12 延伸出來的後續提問。
+### 驗證
 
-## 2. 透過 Telegram 將 output file 傳送給使用者（已完成）
+- session ID JSONL 解析測試。
+- 第一輪與 resume Turn 的 worker 整合測試。
+- session 建立、切換、結束、逾時與滑動期限測試。
+- 既有 SQLite 資料庫 migration 驗證，原 Task 筆數與資料保持不變。
+- Codex CLI `exec resume` 參數格式驗證。
+
+## 2. Telegram 結果與檔案交付（已完成）
 
 完成日期：2026-06-10
 
@@ -76,34 +105,37 @@ parent_task_id
 
 ```text
 /file <task_id>
-  傳送指定任務的 final.md 與 artifacts。
+  傳送指定任務最新一輪的 final.md 與 artifacts。
   若任務尚未產生檔案，回覆目前 task status。
   只允許原任務所屬的 Telegram chat 下載。
 ```
 
 任務成功完成時，worker 也會自動使用 Telegram `send_document` 傳送
-`artifacts/` 內的檔案，不必另外輸入 `/file`。
+`.delivery.json` 指定的附件，不必另外輸入 `/file`。
 
 ### Task 目錄結構
 
 ```text
 tasks/
   task-000001/
-    prompt.txt
-    task.log
-    final.md
-    artifacts/
-      report.pdf
-      image.png
+    turn-000001/
+      prompt.txt
+      task.log
+      final.md
+      artifacts/
+        report.pdf
+        image.png
 ```
 
 ### 完成內容
 
-- 每個 Task 建立獨立目錄，避免不同對話的 log 與產物混在一起。
-- 原始 prompt、完整執行 log、Codex 最終回覆與使用者產物集中保存。
+- 每個 Task 與 Turn 建立獨立目錄，避免不同對話的 log 與產物混在一起。
+- 每輪 prompt、完整執行 log、Codex 最終回覆與使用者產物集中保存。
 - Codex 執行時會收到 artifacts 目錄路徑，並透過 `--add-dir` 加入可寫目錄。
-- 任務完成後自動掃描並傳送 artifacts。
-- `/file <task_id>` 可重新下載 `final.md` 與所有 artifacts。
+- 任務完成後依 `.delivery.json` 傳送指定 artifacts。
+- manifest 缺少、格式錯誤或指定純文字時，不會自動傳送附件。
+- 附件路徑會拒絕絕對路徑、路徑穿越、隱藏檔、重複檔案與 symlink。
+- `/file <task_id>` 可重新下載最新一輪的 `final.md` 與 artifacts。
 - 下載時檢查 task 所屬 `chat_id`，避免跨使用者存取。
 - SQLite 啟動時自動 migration，為既有資料庫加入 `task_dir` 欄位。
 - `CODEX_SANDBOX_MODE` 可由環境變數設定。
@@ -123,7 +155,7 @@ tasks/
 - 支援 `/files <task_id>` 列出指定任務可下載的產物。
 - 加入 Telegram 檔案大小檢查與超過限制時的替代下載方式。
 
-## 3. 讀取使用者透過 Telegram 傳送的附件（待開發）
+## 3. Telegram 附件輸入（待開發）
 
 狀態：尚未開始
 

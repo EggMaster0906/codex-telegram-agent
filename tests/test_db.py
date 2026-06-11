@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db import TaskStore
@@ -55,6 +56,78 @@ class TaskStoreTests(unittest.TestCase):
             self.assertIsNotNone(followup)
             self.assertEqual(followup.parent_task_id, task_id)
             self.assertEqual(followup.codex_session_id, "session-123")
+
+    def test_session_switching_turns_and_sliding_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TaskStore(Path(temp_dir) / "tasks.sqlite3")
+            store.init()
+
+            first_task_id, first_turn_id = store.create_session(
+                123,
+                "first",
+                Path("/tmp"),
+            )
+            first_task = store.get_active_task(123, 86400)
+            self.assertIsNotNone(first_task)
+            self.assertEqual(first_task.id, first_task_id)
+            self.assertTrue(store.is_first_turn(first_task_id, first_turn_id))
+
+            second_turn_id = store.create_turn(first_task_id, "follow up")
+            self.assertFalse(store.is_first_turn(first_task_id, second_turn_id))
+
+            second_task_id, _ = store.create_session(123, "second", Path("/tmp"))
+            self.assertEqual(store.get_active_task(123, 86400).id, second_task_id)
+            self.assertEqual(
+                store.get_task(first_task_id, 123).session_status,
+                "ended",
+            )
+
+            resumed = store.activate_task(first_task_id, 123)
+            self.assertIsNotNone(resumed)
+            self.assertEqual(store.get_active_task(123, 86400).id, first_task_id)
+            self.assertEqual(
+                store.get_task(second_task_id, 123).session_status,
+                "ended",
+            )
+
+            last_activity = datetime.fromisoformat(resumed.last_activity_at)
+            active = store.get_active_task(
+                123,
+                86400,
+                now=last_activity + timedelta(hours=23, minutes=59),
+            )
+            self.assertIsNotNone(active)
+
+            expired = store.get_active_task(
+                123,
+                86400,
+                now=last_activity + timedelta(hours=24),
+            )
+            self.assertIsNone(expired)
+            self.assertEqual(
+                store.get_task(first_task_id, 123).session_status,
+                "expired",
+            )
+
+    def test_create_turn_resets_last_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = TaskStore(Path(temp_dir) / "tasks.sqlite3")
+            store.init()
+            task_id, _ = store.create_session(123, "first", Path("/tmp"))
+            before = datetime.now(timezone.utc) - timedelta(days=1)
+
+            with store.connect() as conn:
+                conn.execute(
+                    "update tasks set last_activity_at = ? where id = ?",
+                    (before.isoformat(), task_id),
+                )
+
+            store.create_turn(task_id, "follow up")
+            task = store.get_task(task_id, 123)
+            self.assertGreater(
+                datetime.fromisoformat(task.last_activity_at),
+                before,
+            )
 
 
 if __name__ == "__main__":

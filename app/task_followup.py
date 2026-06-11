@@ -38,15 +38,3 @@ def read_log_tail(
     if len(tail) > character_limit:
         tail = tail[-character_limit:]
     return tail
-
-
-def build_followup_prompt(task: Task, final_output: str, question: str) -> str:
-    return (
-        f"This is a follow-up to Task #{task.id}.\n\n"
-        "Original task:\n"
-        f"{task.prompt}\n\n"
-        "Previous final response:\n"
-        f"{final_output}\n\n"
-        "Follow-up request:\n"
-        f"{question}"
-    )

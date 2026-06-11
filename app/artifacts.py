@@ -17,6 +17,10 @@ def task_directory(tasks_dir: Path, task_id: int) -> Path:
     return tasks_dir / f"task-{task_id:06d}"
 
 
+def turn_directory(tasks_dir: Path, task_id: int, turn_id: int) -> Path:
+    return task_directory(tasks_dir, task_id) / f"turn-{turn_id:06d}"
+
+
 def prepare_task_directory(task_dir: Path, prompt: str) -> Path:
     artifact_dir = task_dir / ARTIFACTS_DIR_NAME
     artifact_dir.mkdir(parents=True, exist_ok=True)

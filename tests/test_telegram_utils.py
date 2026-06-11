@@ -14,6 +14,8 @@ class TelegramUtilsTests(unittest.TestCase):
             {
                 "start",
                 "help",
+                "new",
+                "end",
                 "run",
                 "status",
                 "file",

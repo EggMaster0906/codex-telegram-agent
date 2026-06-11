@@ -5,11 +5,11 @@ import unittest
 from pathlib import Path
 
 from app.db import Task
-from app.task_followup import build_followup_prompt, read_final_output, read_log_tail
+from app.task_followup import read_final_output, read_log_tail
 
 
 class TaskFollowupTests(unittest.TestCase):
-    def test_reads_output_and_builds_followup_prompt(self) -> None:
+    def test_reads_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "final.md"
             output_path.write_text("previous answer", encoding="utf-8")
@@ -17,15 +17,6 @@ class TaskFollowupTests(unittest.TestCase):
 
             final_output = read_final_output(task)
             self.assertEqual(final_output, "previous answer")
-            self.assertEqual(
-                build_followup_prompt(task, final_output, "what changed?"),
-                (
-                    "This is a follow-up to Task #12.\n\n"
-                    "Original task:\noriginal request\n\n"
-                    "Previous final response:\nprevious answer\n\n"
-                    "Follow-up request:\nwhat changed?"
-                ),
-            )
 
     def test_reads_only_configured_log_tail(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

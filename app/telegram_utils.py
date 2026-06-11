@@ -6,15 +6,17 @@ SAFE_CHUNK_SIZE = 3600
 COMMAND_HELP = (
     ("start", "/start", "顯示 Bot 狀態、chat ID 與授權狀態"),
     ("help", "/help", "列出目前支援的指令與功能"),
-    ("run", "/run <task prompt>", "建立新的 Codex 任務"),
+    ("new", "/new <task prompt>", "建立新的 24 小時 Codex session"),
+    ("end", "/end", "結束目前的 Codex session"),
+    ("run", "/run <task prompt>", "建立獨立的舊式 Codex 任務"),
     ("status", "/status", "顯示最近五筆任務與狀態"),
     ("file", "/file <task_id>", "下載任務結果與產出檔案"),
     ("result", "/result <task_id>", "查看任務的文字結果"),
     ("log", "/log <task_id>", "查看任務最近的執行紀錄"),
     (
         "continue",
-        "/continue <task_id> <follow-up question>",
-        "針對已完成的任務建立後續提問",
+        "/continue <task_id>",
+        "恢復指定 Task 的 Codex session",
     ),
 )
 
