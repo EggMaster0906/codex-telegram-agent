@@ -15,7 +15,8 @@
 - [x] `/result`、`/log`、`/file` 與 `/status`
 - [x] Telegram 附件輸入
 - [ ] 任務取消
-- [ ] Artifact metadata 與 `/files`
+- [ ] Artifact metadata 與互動式 `/file` 產物選擇
+- [ ] `/model` 模型切換
 - [ ] 多 workspace 管理
 - [ ] systemd 常駐服務
 
@@ -203,3 +204,97 @@ tasks/
 - 後續普通文字會接續同一個 session，可再補充附件處理需求。
 - 使用 Telegram 雲端 Bot API 的 20 MB 下載上限；尚未導入 Local Bot API
   Server 或替代下載管道。
+
+## 4. 互動式 `/file` 產物選擇（待開發）
+
+### 目標
+
+執行 `/file <task_id>` 時不再直接傳送該任務的所有檔案，而是先列出最新一輪
+可下載的任務產物，再由使用者選擇要下載的項目。
+
+### 預期使用方式
+
+```text
+/file <task_id>
+  Bot 列出 final.md 與 artifacts 目錄中的可下載產物。
+  使用者點選項目後，Bot 傳送該檔案。
+```
+
+### Telegram 互動按鈕可行性
+
+- Telegram Bot API 支援 Inline Keyboard，可在產物清單訊息下方建立檔案按鈕。
+- 使用者點擊按鈕後，Bot 可透過 Callback Query 取得選擇並傳送對應檔案。
+- `callback_data` 長度有限，不應直接放入完整檔案路徑；可使用短識別碼，
+  再由伺服器端查回 Task、Turn 與 artifact metadata。
+- 產物數量較多時需要分頁，並提供上一頁、下一頁及全部下載等操作。
+- 若 Inline Keyboard 無法使用或 callback 已失效，提供
+  `/file <task_id> <artifact_id>` 文字指令作為備援。
+
+### 初步實作方向
+
+- 將 artifact metadata 寫入資料庫，包含短識別碼、Task、Turn、顯示名稱、
+  實際路徑、檔案大小與建立時間。
+- `/file <task_id>` 回傳可下載產物清單及 Inline Keyboard。
+- Callback Query 必須再次驗證 Telegram `chat_id`、Task 所有權及檔案是否仍存在。
+- 僅允許下載 Task 目錄內已驗證的普通檔案，沿用既有路徑穿越、隱藏檔與
+  symlink 防護。
+- 檔案超過 Telegram 傳送限制時，顯示明確錯誤或替代下載方式。
+- 保留 `final.md` 作為可選項目，不再預設與所有 artifacts 一次傳送。
+
+### 驗收條件
+
+- `/file <task_id>` 能正確列出最新一輪所有可下載產物。
+- 點擊任一產物按鈕後，只傳送該項目。
+- 無權限、檔案不存在、按鈕逾時及超過大小限制時均有清楚提示。
+- 清單超過單頁容量時可正常換頁。
+- 文字備援指令可在不使用按鈕的情況下完成下載。
+
+## 5. `/model` 模型切換（待開發）
+
+### 目標
+
+讓使用者透過 `/model` 查看目前模型及可用模型清單，並切換後續 Codex Turn
+使用的模型。
+
+### 預期使用方式
+
+```text
+/model
+  顯示目前模型與可用模型，並提供選擇按鈕。
+
+/model <model_id>
+  直接切換至指定模型，作為文字輸入備援。
+```
+
+### Telegram 互動按鈕可行性
+
+- 可使用 Inline Keyboard 顯示模型清單，點擊後透過 Callback Query 切換模型。
+- 模型數量較多時可分頁，並在目前使用的模型旁標示已選取狀態。
+- 按鈕的 `callback_data` 僅傳遞短模型識別碼，實際模型名稱由伺服器端白名單
+  解析，避免任意參數注入。
+- 若 Inline Keyboard 不可用，使用者仍可透過 `/model <model_id>` 手動選擇。
+
+### 待確認事項
+
+- 可用模型清單的來源：環境設定白名單、Codex CLI 能力查詢，或兩者結合。
+- 模型設定的作用範圍：僅目前 session、目前 Telegram chat，或全域預設值。
+- 切換模型後是否立即套用至目前 Task 的下一個 Turn。
+- 恢復既有 session 時，Codex CLI 是否允許安全地指定不同模型，以及不同模型
+  間的 session 相容性。
+- 模型不可用、權限不足或 CLI 拒絕切換時的回復與提示方式。
+
+### 初步實作方向
+
+- 第一版以伺服器端設定的模型白名單為準，不直接接受未驗證的模型名稱。
+- 在資料庫保存選定模型及其作用範圍，建立 Turn 時將模型傳給 Codex CLI。
+- `/model` 顯示目前選擇、可用清單及 Inline Keyboard。
+- Callback Query 與文字指令共用同一套模型驗證及切換邏輯。
+- 切換成功後編輯原訊息或回覆確認，並標示從哪一個 Turn 開始生效。
+
+### 驗收條件
+
+- `/model` 能顯示目前模型及完整可用模型清單。
+- 按鈕與 `/model <model_id>` 均可成功切換模型。
+- 下一個 Turn 確實使用選定模型，且執行紀錄可追蹤該模型。
+- 不在白名單、無法使用或不相容的模型不會被套用，並提供清楚提示。
+- Bot 重啟後仍能依定義的作用範圍保留模型選擇。
