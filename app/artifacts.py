@@ -69,13 +69,7 @@ def artifact_files(task: Task) -> list[Path]:
 
 
 def downloadable_files(task: Task) -> list[Path]:
-    files = []
-    if task.output_path:
-        output_path = Path(task.output_path)
-        if output_path.is_file() and not output_path.is_symlink():
-            files.append(output_path)
-    files.extend(artifact_files(task))
-    return files
+    return artifact_files(task)
 
 
 def artifact_metadata(

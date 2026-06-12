@@ -20,13 +20,14 @@ from app.db import Artifact, Task
 
 
 class ArtifactTests(unittest.TestCase):
-    def test_downloads_final_output_and_user_artifacts_only(self) -> None:
+    def test_downloads_user_artifacts_without_final_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             task_dir = Path(temp_dir) / "task-000001"
             artifact_dir = prepare_task_directory(task_dir, "make a report")
             log_path = task_dir / TASK_LOG_NAME
             output_path = task_dir / FINAL_OUTPUT_NAME
             report_path = artifact_dir / "report.pdf"
+            named_final_artifact = artifact_dir / FINAL_OUTPUT_NAME
             direct_output_path = task_dir / "preview.png"
             hidden_path = artifact_dir / ".internal"
             input_path = task_dir / "inputs" / "source.pdf"
@@ -34,6 +35,7 @@ class ArtifactTests(unittest.TestCase):
             log_path.write_text("log", encoding="utf-8")
             output_path.write_text("done", encoding="utf-8")
             report_path.write_bytes(b"pdf")
+            named_final_artifact.write_text("deliverable", encoding="utf-8")
             direct_output_path.write_bytes(b"png")
             hidden_path.write_text("secret", encoding="utf-8")
             input_path.parent.mkdir()
@@ -43,11 +45,11 @@ class ArtifactTests(unittest.TestCase):
 
             self.assertEqual(
                 artifact_files(task),
-                [direct_output_path, report_path],
+                [direct_output_path, named_final_artifact, report_path],
             )
             self.assertEqual(
                 downloadable_files(task),
-                [output_path, direct_output_path, report_path],
+                [direct_output_path, named_final_artifact, report_path],
             )
 
     def test_only_delivers_manifest_attachments(self) -> None:
@@ -130,7 +132,7 @@ class ArtifactTests(unittest.TestCase):
             metadata = artifact_metadata(task)
             self.assertEqual(
                 [item.relative_path for item in metadata],
-                ["final.md", "artifacts/report.pdf"],
+                ["artifacts/report.pdf"],
             )
             artifact = Artifact(
                 id=1,

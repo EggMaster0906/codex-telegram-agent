@@ -66,7 +66,7 @@
 - `/status` 顯示最近五筆 Task 的執行狀態與 session 狀態。
 - `/result <task_id>` 分段回傳最新一輪 final output。
 - `/log <task_id>` 回傳最新一輪最近 80 行、最多 12,000 字元的 log。
-- `/file <task_id>` 列出最新一輪 final output 與 artifacts，供使用者選擇下載。
+- `/file <task_id>` 列出最新一輪 artifacts，供使用者選擇下載。
 - final output 超過 Telegram 單則訊息限制時會自動分段。
 - 一般回答預設只交付文字。
 - 只有 `.delivery.json` 指定的 artifacts 會在完成時自動傳送。
@@ -106,7 +106,7 @@ task_turns
 
 ```text
 /file <task_id>
-  列出指定任務最新一輪的 final.md 與 artifacts。
+  列出指定任務最新一輪的 artifacts，不包含 final.md。
   可點選單一產物、換頁或下載全部。
   亦可使用 /file <task_id> <artifact_id> 下載指定項目。
   若任務尚未產生檔案，回覆目前 task status。
@@ -138,7 +138,7 @@ tasks/
 - 任務完成後依 `.delivery.json` 傳送指定 artifacts。
 - manifest 缺少、格式錯誤或指定純文字時，不會自動傳送附件。
 - 附件路徑會拒絕絕對路徑、路徑穿越、隱藏檔、重複檔案與 symlink。
-- `/file <task_id>` 可列出並選擇下載最新一輪的 `final.md` 與 artifacts。
+- `/file <task_id>` 可列出並選擇下載最新一輪的 artifacts。
 - 下載時檢查 task 所屬 `chat_id`，避免跨使用者存取。
 - SQLite 啟動時自動 migration，為既有資料庫加入 `task_dir` 欄位。
 - `CODEX_SANDBOX_MODE` 可由環境變數設定。
@@ -218,7 +218,7 @@ tasks/
 
 ```text
 /file <task_id>
-  Bot 列出 final.md 與 artifacts 目錄中的可下載產物。
+  Bot 列出 artifacts 目錄中的可下載產物。
   使用者點選項目後，Bot 傳送該檔案。
 ```
 
@@ -241,7 +241,7 @@ tasks/
 - 僅允許下載 Task 目錄內已驗證的普通檔案，沿用既有路徑穿越、隱藏檔與
   symlink 防護。
 - 檔案超過 Telegram 傳送限制時，顯示明確錯誤或替代下載方式。
-- 保留 `final.md` 作為可選項目，不再預設與所有 artifacts 一次傳送。
+- `final.md` 僅供 `/result` 回傳文字結果，不列入 `/file` 產物清單。
 
 ### 驗收條件
 
