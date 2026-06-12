@@ -35,6 +35,7 @@ def build_codex_command(
     prompt: str,
     session_id: str | None,
     input_dir: Path | None = None,
+    model: str | None = None,
 ) -> list[str]:
     command = [
         codex_bin,
@@ -45,6 +46,8 @@ def build_codex_command(
         "--add-dir",
         str(artifact_dir),
     ]
+    if model:
+        command.extend(["--model", model])
     if input_dir is not None and input_dir.is_dir():
         command.extend(["--add-dir", str(input_dir)])
     command.extend(
@@ -72,6 +75,7 @@ async def run_codex(
     timeout_seconds: int,
     input_dir: Path | None = None,
     session_id: str | None = None,
+    model: str | None = None,
 ) -> CodexResult:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +109,7 @@ async def run_codex(
         output_path=output_path,
         prompt=prompt + artifact_instruction,
         session_id=session_id,
+        model=model,
     )
 
     captured_session_id = session_id

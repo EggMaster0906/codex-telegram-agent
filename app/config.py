@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.models import parse_model_list
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -19,6 +21,8 @@ class Settings:
     tasks_dir: Path
     worker_poll_seconds: float
     session_timeout_seconds: int
+    available_models: tuple[str, ...] = ()
+    default_model: str | None = None
 
 
 def _required(name: str) -> str:
@@ -35,6 +39,15 @@ def _chat_ids(raw: str) -> set[int]:
 def load_settings() -> Settings:
     load_dotenv()
     root = Path("/home/ai-agent/codex-telegram-agent")
+    available_models = parse_model_list(os.getenv("CODEX_MODELS", ""))
+    configured_default = os.getenv("CODEX_DEFAULT_MODEL", "").strip() or None
+    if configured_default and configured_default not in available_models:
+        raise RuntimeError(
+            "CODEX_DEFAULT_MODEL must be included in CODEX_MODELS"
+        )
+    default_model = configured_default or (
+        available_models[0] if available_models else None
+    )
 
     return Settings(
         telegram_bot_token=_required("TELEGRAM_BOT_TOKEN"),
@@ -47,4 +60,6 @@ def load_settings() -> Settings:
         tasks_dir=Path(os.getenv("TASKS_DIR", str(root / "tasks"))),
         worker_poll_seconds=float(os.getenv("WORKER_POLL_SECONDS", "2")),
         session_timeout_seconds=int(os.getenv("SESSION_TIMEOUT_SECONDS", "86400")),
+        available_models=available_models,
+        default_model=default_model,
     )

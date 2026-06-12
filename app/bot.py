@@ -7,6 +7,7 @@ from telegram import BotCommand, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -23,14 +24,30 @@ from app.attachments import (
     parse_attachment_caption,
 )
 from app.artifacts import (
-    downloadable_files,
     prepare_task_directory,
+    resolve_artifact_path,
+    sync_artifact_metadata,
     task_directory,
     turn_directory,
     write_prompt,
 )
 from app.config import load_settings
 from app.db import TaskStore
+from app.file_selection import (
+    FILE_CALLBACK_PREFIX,
+    MAX_TELEGRAM_DOCUMENT_BYTES,
+    build_file_keyboard,
+    file_list_message,
+    human_file_size,
+    parse_file_callback,
+    truncate_text,
+)
+from app.models import (
+    MODEL_CALLBACK_PREFIX,
+    build_model_keyboard,
+    model_message,
+    resolve_model_callback,
+)
 from app.task_followup import read_final_output, read_log_tail
 from app.telegram_delivery import send_markdown_text
 from app.telegram_utils import (
@@ -45,6 +62,13 @@ from app.worker import Worker
 settings = load_settings()
 store = TaskStore(settings.database_path)
 store.init()
+
+
+def selected_model_for_chat(chat_id: int) -> str | None:
+    selected_model = store.get_selected_model(chat_id, settings.default_model)
+    if selected_model in settings.available_models:
+        return selected_model
+    return settings.default_model
 
 
 async def require_auth(update: Update) -> bool:
@@ -90,7 +114,13 @@ async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     chat = update.effective_chat
-    task_id = store.create_task(chat.id, prompt, settings.default_workspace)
+    selected_model = selected_model_for_chat(chat.id)
+    task_id = store.create_task(
+        chat.id,
+        prompt,
+        settings.default_workspace,
+        model=selected_model,
+    )
     task_dir = task_directory(settings.tasks_dir, task_id)
     prepare_task_directory(task_dir, prompt)
     store.set_task_dir(task_id, task_dir)
@@ -110,10 +140,12 @@ async def new_session(
         return
 
     chat = update.effective_chat
+    selected_model = selected_model_for_chat(chat.id)
     task_id, turn_id = store.create_session(
         chat.id,
         prompt,
         settings.default_workspace,
+        model=selected_model,
     )
     turn_dir = turn_directory(settings.tasks_dir, task_id, turn_id)
     prepare_task_directory(turn_dir, prompt)
@@ -163,7 +195,8 @@ async def handle_message(
         )
         return
 
-    turn_id = store.create_turn(task.id, prompt)
+    selected_model = selected_model_for_chat(chat.id)
+    turn_id = store.create_turn(task.id, prompt, model=selected_model)
     turn_dir = turn_directory(settings.tasks_dir, task.id, turn_id)
     prepare_task_directory(turn_dir, prompt)
     store.set_turn_dir(turn_id, turn_dir)
@@ -201,19 +234,23 @@ async def handle_attachment(
             settings.session_timeout_seconds,
         )
     if task is None:
+        selected_model = selected_model_for_chat(chat.id)
         task_id, turn_id = store.create_session(
             chat.id,
             prompt,
             settings.default_workspace,
             initial_status="uploading",
+            model=selected_model,
         )
         queue_message = f"Task #{task_id} attachment queued as a new session."
     else:
         task_id = task.id
+        selected_model = selected_model_for_chat(chat.id)
         turn_id = store.create_turn(
             task_id,
             prompt,
             initial_status="uploading",
+            model=selected_model,
         )
         queue_message = f"Task #{task_id} attachment follow-up queued."
 
@@ -256,7 +293,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines = [
         (
             f"#{task.id} {task.status} [{task.session_status}]: "
-            f"{task.prompt[:80]}"
+            f"{task.prompt[:80]} (model: {task.model or 'Codex default'})"
         )
         for task in tasks
     ]
@@ -267,14 +304,18 @@ async def file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await require_auth(update):
         return
 
-    if len(context.args) != 1:
-        await update.message.reply_text("Usage: /file <task_id>")
+    if len(context.args) not in {1, 2}:
+        await update.message.reply_text(
+            "Usage: /file <task_id> [artifact_id]"
+        )
         return
 
     try:
         task_id = int(context.args[0])
     except ValueError:
-        await update.message.reply_text("Usage: /file <task_id>")
+        await update.message.reply_text(
+            "Usage: /file <task_id> [artifact_id]"
+        )
         return
 
     chat = update.effective_chat
@@ -283,25 +324,126 @@ async def file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Task #{task_id} not found.")
         return
 
-    files = downloadable_files(task)
-    if not files:
+    artifacts = sync_artifact_metadata(store, task)
+    if not artifacts:
         await update.message.reply_text(
             f"Task #{task_id} has no output files yet (status: {task.status})."
         )
         return
 
-    for path in files:
+    if len(context.args) == 2:
         try:
-            with path.open("rb") as document:
-                await context.bot.send_document(
-                    chat_id=chat.id,
-                    document=document,
-                    caption=f"Task #{task.id}: {path.name}",
-                )
-        except (OSError, TelegramError) as exc:
+            artifact_id = int(context.args[1])
+        except ValueError:
             await update.message.reply_text(
-                f"Could not send {path.name}: {exc}"
+                "Usage: /file <task_id> [artifact_id]"
             )
+            return
+        artifact = next(
+            (item for item in artifacts if item.id == artifact_id),
+            None,
+        )
+        if artifact is None:
+            await update.message.reply_text(
+                "找不到這個產物，請重新使用 /file 取得最新清單。"
+            )
+            return
+        error = await send_artifact(context.bot, chat.id, task, artifact)
+        if error:
+            await update.message.reply_text(error)
+        return
+
+    await update.message.reply_text(
+        file_list_message(task.id, artifacts, 0),
+        reply_markup=build_file_keyboard(task.id, artifacts, 0),
+    )
+
+
+async def send_artifact(bot, chat_id: int, task, artifact) -> str | None:
+    path = resolve_artifact_path(task, artifact)
+    if path is None:
+        return "檔案已不存在或選項已失效，請重新使用 /file。"
+
+    try:
+        file_size = path.stat().st_size
+        if file_size > MAX_TELEGRAM_DOCUMENT_BYTES:
+            return (
+                f"{artifact.display_name} 大小為 {human_file_size(file_size)}，"
+                "超過 Telegram Bot API 的 50 MB 傳送上限。"
+            )
+        with path.open("rb") as document:
+            await bot.send_document(
+                chat_id=chat_id,
+                document=document,
+                caption=truncate_text(
+                    f"Task #{task.id}: {artifact.display_name}",
+                    900,
+                ),
+            )
+    except (OSError, TelegramError) as exc:
+        return f"無法傳送 {artifact.display_name}：{exc}"
+    return None
+
+
+async def file_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    chat = update.effective_chat
+    if query is None or chat is None:
+        return
+    if not is_authorized(chat.id, settings.allowed_chat_ids):
+        await query.answer("Unauthorized chat.", show_alert=True)
+        return
+
+    callback = parse_file_callback(query.data or "")
+    if callback is None:
+        await query.answer(
+            "這個檔案選項已失效，請重新使用 /file。",
+            show_alert=True,
+        )
+        return
+
+    if callback.action == "download":
+        artifact = store.get_artifact(callback.value)
+        task = (
+            store.get_task(artifact.task_id, chat.id)
+            if artifact is not None
+            else None
+        )
+        if artifact is None or task is None:
+            await query.answer("無權限或檔案選項已失效。", show_alert=True)
+            return
+        await query.answer()
+        error = await send_artifact(context.bot, chat.id, task, artifact)
+        if error:
+            await context.bot.send_message(chat.id, error)
+        return
+
+    task = store.get_task(callback.value, chat.id)
+    if task is None:
+        await query.answer("無權限或 Task 不存在。", show_alert=True)
+        return
+    artifacts = sync_artifact_metadata(store, task)
+    if not artifacts:
+        await query.answer("目前沒有可下載產物。", show_alert=True)
+        return
+
+    if callback.action == "page":
+        page = callback.page or 0
+        await query.answer()
+        await query.edit_message_text(
+            file_list_message(task.id, artifacts, page),
+            reply_markup=build_file_keyboard(task.id, artifacts, page),
+        )
+        return
+
+    await query.answer("開始傳送全部產物")
+    for artifact in artifacts:
+        error = await send_artifact(context.bot, chat.id, task, artifact)
+        if error:
+            await context.bot.send_message(chat.id, error)
 
 
 async def result(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -418,6 +560,76 @@ async def continue_task(
     )
 
 
+async def model_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+
+    chat = update.effective_chat
+    current_model = selected_model_for_chat(chat.id)
+    if not context.args:
+        reply_markup = (
+            build_model_keyboard(settings.available_models, current_model)
+            if settings.available_models
+            else None
+        )
+        await update.message.reply_text(
+            model_message(settings.available_models, current_model),
+            reply_markup=reply_markup,
+        )
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Usage: /model <model_id>")
+        return
+
+    requested_model = context.args[0]
+    if requested_model not in settings.available_models:
+        await update.message.reply_text(
+            f"模型「{requested_model}」不在允許的白名單中。\n"
+            f"可用模型：{', '.join(settings.available_models) or '(未設定)'}"
+        )
+        return
+
+    store.set_selected_model(chat.id, requested_model)
+    await update.message.reply_text(
+        f"已切換至 {requested_model}，從下一個新建 Turn 開始生效。"
+    )
+
+
+async def model_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    chat = update.effective_chat
+    if query is None or chat is None:
+        return
+    if not is_authorized(chat.id, settings.allowed_chat_ids):
+        await query.answer("Unauthorized chat.", show_alert=True)
+        return
+
+    selected_model = resolve_model_callback(
+        query.data or "",
+        settings.available_models,
+    )
+    if selected_model is None:
+        await query.answer("這個模型選項已失效，請重新使用 /model。", show_alert=True)
+        return
+
+    store.set_selected_model(chat.id, selected_model)
+    await query.answer(f"已切換至 {selected_model}")
+    await query.edit_message_text(
+        model_message(settings.available_models, selected_model),
+        reply_markup=build_model_keyboard(
+            settings.available_models,
+            selected_model,
+        ),
+    )
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(
         [
@@ -460,6 +672,19 @@ def main() -> None:
     application.add_handler(CommandHandler("result", result))
     application.add_handler(CommandHandler("log", log))
     application.add_handler(CommandHandler("continue", continue_task))
+    application.add_handler(CommandHandler("model", model_command))
+    application.add_handler(
+        CallbackQueryHandler(
+            model_callback,
+            pattern=f"^{MODEL_CALLBACK_PREFIX}",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            file_callback,
+            pattern=f"^{FILE_CALLBACK_PREFIX}",
+        )
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )

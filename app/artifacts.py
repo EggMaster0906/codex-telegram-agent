@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.attachments import INPUTS_DIR_NAME
-from app.db import Task
+from app.db import Artifact, ArtifactInput, Task, TaskStore
 
 
 TASK_LOG_NAME = "task.log"
@@ -75,6 +76,84 @@ def downloadable_files(task: Task) -> list[Path]:
             files.append(output_path)
     files.extend(artifact_files(task))
     return files
+
+
+def artifact_metadata(
+    task: Task,
+    turn_id: int | None = None,
+) -> list[ArtifactInput]:
+    if not task.task_dir:
+        return []
+
+    task_dir = Path(task.task_dir).resolve()
+    metadata = []
+    for path in downloadable_files(task):
+        if path.is_symlink():
+            continue
+        resolved = path.resolve()
+        try:
+            relative_path = resolved.relative_to(task_dir)
+        except ValueError:
+            continue
+        if not resolved.is_file():
+            continue
+
+        stat = resolved.stat()
+        metadata.append(
+            ArtifactInput(
+                turn_id=turn_id,
+                task_dir=str(task_dir),
+                display_name=str(relative_path),
+                relative_path=str(relative_path),
+                file_size=stat.st_size,
+                created_at=datetime.fromtimestamp(
+                    stat.st_ctime,
+                    tz=timezone.utc,
+                ).isoformat(),
+            )
+        )
+    return metadata
+
+
+def sync_artifact_metadata(store: TaskStore, task: Task) -> list[Artifact]:
+    turn_id = (
+        store.get_turn_id_for_task_dir(task.id, task.task_dir)
+        if task.task_dir
+        else None
+    )
+    return store.sync_artifacts(
+        task.id,
+        artifact_metadata(task, turn_id),
+    )
+
+
+def resolve_artifact_path(task: Task, artifact: Artifact) -> Path | None:
+    if artifact.task_id != task.id or not task.task_dir:
+        return None
+
+    task_dir = Path(task.task_dir).resolve()
+    if artifact.task_dir != str(task_dir):
+        return None
+
+    relative_path = Path(artifact.relative_path)
+    if (
+        relative_path.is_absolute()
+        or ".." in relative_path.parts
+        or any(part.startswith(".") for part in relative_path.parts)
+    ):
+        return None
+
+    candidate = task_dir / relative_path
+    if candidate.is_symlink():
+        return None
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(task_dir)
+    except ValueError:
+        return None
+    if not resolved.is_file() or resolved.is_symlink():
+        return None
+    return resolved
 
 
 def delivery_manifest_path(task_dir: Path) -> Path:

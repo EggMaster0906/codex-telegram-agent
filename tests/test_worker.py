@@ -115,6 +115,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 mocked_runner.await_args_list[1].kwargs["session_id"],
                 "session-123",
             )
+            self.assertIsNone(mocked_runner.await_args_list[0].kwargs["model"])
             self.assertEqual(
                 [text for _, text in bot.messages],
                 ["Task #1 started.", "done", "done"],
@@ -175,6 +176,54 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 "session-after-timeout",
             )
             self.assertEqual(store.get_task(task_id, 123).status, "done")
+
+    async def test_turn_uses_its_captured_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            store.create_session(
+                123,
+                "first prompt",
+                root,
+                model="gpt-test",
+            )
+            settings = Settings(
+                telegram_bot_token="test",
+                allowed_chat_ids={123},
+                default_workspace=root,
+                codex_bin="codex",
+                codex_sandbox_mode="workspace-write",
+                task_timeout_seconds=60,
+                database_path=root / "tasks.sqlite3",
+                tasks_dir=root / "tasks",
+                worker_poll_seconds=0.01,
+                session_timeout_seconds=86400,
+                available_models=("gpt-test",),
+                default_model="gpt-test",
+            )
+            worker = Worker(settings, store, FakeBot())
+
+            async def fake_run_codex(**kwargs: object) -> CodexResult:
+                output_path = kwargs["output_path"]
+                artifact_dir = kwargs["artifact_dir"]
+                assert isinstance(output_path, Path)
+                assert isinstance(artifact_dir, Path)
+                output_path.write_text("done", encoding="utf-8")
+                (artifact_dir / ".delivery.json").write_text(
+                    json.dumps({"delivery": "text", "attachments": []}),
+                    encoding="utf-8",
+                )
+                return CodexResult(0, "session-123")
+
+            mocked_runner = AsyncMock(side_effect=fake_run_codex)
+            with patch("app.worker.run_codex", mocked_runner):
+                await worker.run_turn(store.next_pending_turn())
+
+            self.assertEqual(
+                mocked_runner.await_args.kwargs["model"],
+                "gpt-test",
+            )
 
 
 if __name__ == "__main__":

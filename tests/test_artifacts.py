@@ -10,11 +10,13 @@ from app.artifacts import (
     FINAL_OUTPUT_NAME,
     TASK_LOG_NAME,
     artifact_files,
+    artifact_metadata,
     delivered_artifact_files,
     downloadable_files,
     prepare_task_directory,
+    resolve_artifact_path,
 )
-from app.db import Task
+from app.db import Artifact, Task
 
 
 class ArtifactTests(unittest.TestCase):
@@ -108,6 +110,64 @@ class ArtifactTests(unittest.TestCase):
 
             manifest_path.write_text("not json", encoding="utf-8")
             self.assertEqual(delivered_artifact_files(task), [])
+
+    def test_metadata_and_path_resolution_are_scoped_to_latest_task_dir(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            task_dir = Path(temp_dir) / "task-000001"
+            artifact_dir = prepare_task_directory(task_dir, "make a report")
+            output_path = task_dir / FINAL_OUTPUT_NAME
+            report_path = artifact_dir / "report.pdf"
+            output_path.write_text("done", encoding="utf-8")
+            report_path.write_bytes(b"pdf")
+            task = self.make_task(
+                task_dir,
+                task_dir / TASK_LOG_NAME,
+                output_path,
+            )
+
+            metadata = artifact_metadata(task)
+            self.assertEqual(
+                [item.relative_path for item in metadata],
+                ["final.md", "artifacts/report.pdf"],
+            )
+            artifact = Artifact(
+                id=1,
+                task_id=task.id,
+                turn_id=None,
+                task_dir=str(task_dir.resolve()),
+                display_name="artifacts/report.pdf",
+                relative_path="artifacts/report.pdf",
+                file_size=3,
+                created_at="2026-06-12T00:00:00+00:00",
+            )
+            self.assertEqual(
+                resolve_artifact_path(task, artifact),
+                report_path.resolve(),
+            )
+            self.assertIsNone(
+                resolve_artifact_path(
+                    task,
+                    Artifact(
+                        **{
+                            **artifact.__dict__,
+                            "task_dir": str(task_dir / "old-turn"),
+                        }
+                    ),
+                )
+            )
+            self.assertIsNone(
+                resolve_artifact_path(
+                    task,
+                    Artifact(
+                        **{
+                            **artifact.__dict__,
+                            "relative_path": "../secret",
+                        }
+                    ),
+                )
+            )
 
     @staticmethod
     def make_task(task_dir: Path, log_path: Path, output_path: Path) -> Task:

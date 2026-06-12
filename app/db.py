@@ -25,6 +25,7 @@ class Task:
     parent_task_id: int | None
     session_status: str = "ended"
     last_activity_at: str | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,29 @@ class TaskTurn:
     log_path: str | None
     output_path: str | None
     error_message: str | None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class Artifact:
+    id: int
+    task_id: int
+    turn_id: int | None
+    task_dir: str
+    display_name: str
+    relative_path: str
+    file_size: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ArtifactInput:
+    turn_id: int | None
+    task_dir: str
+    display_name: str
+    relative_path: str
+    file_size: int
+    created_at: str
 
 
 class TaskStore:
@@ -68,6 +92,7 @@ class TaskStore:
                     parent_task_id integer,
                     session_status text not null default 'ended',
                     last_activity_at text,
+                    model text,
                     created_at text not null,
                     started_at text,
                     finished_at text,
@@ -92,6 +117,7 @@ class TaskStore:
                 "last_activity_at": (
                     "alter table tasks add column last_activity_at text"
                 ),
+                "model": "alter table tasks add column model text",
             }
             for column, statement in migrations.items():
                 if column not in columns:
@@ -108,6 +134,7 @@ class TaskStore:
                     log_path text,
                     output_path text,
                     error_message text,
+                    model text,
                     created_at text not null,
                     started_at text,
                     finished_at text,
@@ -115,6 +142,45 @@ class TaskStore:
                 )
                 """
             )
+            turn_columns = {
+                str(row["name"])
+                for row in conn.execute("pragma table_info(task_turns)").fetchall()
+            }
+            if "model" not in turn_columns:
+                conn.execute("alter table task_turns add column model text")
+
+            conn.execute(
+                """
+                create table if not exists chat_settings (
+                    chat_id integer primary key,
+                    selected_model text,
+                    updated_at text not null
+                )
+                """
+            )
+            conn.execute(
+                """
+                create table if not exists artifacts (
+                    id integer primary key autoincrement,
+                    task_id integer not null,
+                    turn_id integer,
+                    task_dir text not null,
+                    display_name text not null,
+                    relative_path text not null,
+                    file_size integer not null,
+                    created_at text not null,
+                    unique (task_id, task_dir, relative_path),
+                    foreign key (task_id) references tasks(id),
+                    foreign key (turn_id) references task_turns(id)
+                )
+                """
+            )
+            artifact_columns = {
+                str(row["name"])
+                for row in conn.execute("pragma table_info(artifacts)").fetchall()
+            }
+            if "turn_id" not in artifact_columns:
+                conn.execute("alter table artifacts add column turn_id integer")
 
     def create_task(
         self,
@@ -124,15 +190,16 @@ class TaskStore:
         *,
         parent_task_id: int | None = None,
         codex_session_id: str | None = None,
+        model: str | None = None,
     ) -> int:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 insert into tasks (
                     chat_id, prompt, status, workspace_path, codex_session_id,
-                    parent_task_id, session_status, created_at
+                    parent_task_id, session_status, model, created_at
                 )
-                values (?, ?, 'pending', ?, ?, ?, 'ended', ?)
+                values (?, ?, 'pending', ?, ?, ?, 'ended', ?, ?)
                 """,
                 (
                     chat_id,
@@ -140,6 +207,7 @@ class TaskStore:
                     str(workspace_path),
                     codex_session_id,
                     parent_task_id,
+                    model,
                     utc_now(),
                 ),
             )
@@ -152,6 +220,7 @@ class TaskStore:
         workspace_path: Path,
         *,
         initial_status: str = "pending",
+        model: str | None = None,
     ) -> tuple[int, int]:
         now = utc_now()
         with self.connect() as conn:
@@ -167,9 +236,9 @@ class TaskStore:
                 """
                 insert into tasks (
                     chat_id, prompt, status, workspace_path, session_status,
-                    last_activity_at, created_at
+                    last_activity_at, model, created_at
                 )
-                values (?, ?, ?, ?, 'active', ?, ?)
+                values (?, ?, ?, ?, 'active', ?, ?, ?)
                 """,
                 (
                     chat_id,
@@ -177,6 +246,7 @@ class TaskStore:
                     initial_status,
                     str(workspace_path),
                     now,
+                    model,
                     now,
                 ),
             )
@@ -187,6 +257,7 @@ class TaskStore:
                 prompt,
                 now,
                 initial_status,
+                model,
             )
             return task_id, turn_id
 
@@ -196,6 +267,7 @@ class TaskStore:
         prompt: str,
         *,
         initial_status: str = "pending",
+        model: str | None = None,
     ) -> int:
         now = utc_now()
         with self.connect() as conn:
@@ -205,15 +277,16 @@ class TaskStore:
                 prompt,
                 now,
                 initial_status,
+                model,
             )
             conn.execute(
                 """
                 update tasks
                 set status = ?, error_message = null,
-                    last_activity_at = ?
+                    last_activity_at = ?, model = ?
                 where id = ?
                 """,
-                (initial_status, now, task_id),
+                (initial_status, now, model, task_id),
             )
             return turn_id
 
@@ -224,13 +297,14 @@ class TaskStore:
         prompt: str,
         created_at: str,
         status: str = "pending",
+        model: str | None = None,
     ) -> int:
         cursor = conn.execute(
             """
-            insert into task_turns (task_id, prompt, status, created_at)
-            values (?, ?, ?, ?)
+            insert into task_turns (task_id, prompt, status, model, created_at)
+            values (?, ?, ?, ?, ?)
             """,
-            (task_id, prompt, status, created_at),
+            (task_id, prompt, status, model, created_at),
         )
         return int(cursor.lastrowid)
 
@@ -305,6 +379,129 @@ class TaskStore:
                 "update tasks set codex_session_id = ? where id = ?",
                 (session_id, task_id),
             )
+
+    def get_selected_model(
+        self,
+        chat_id: int,
+        default_model: str | None,
+    ) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "select selected_model from chat_settings where chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+            return str(row["selected_model"]) if row else default_model
+
+    def set_selected_model(self, chat_id: int, model: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into chat_settings (chat_id, selected_model, updated_at)
+                values (?, ?, ?)
+                on conflict(chat_id) do update set
+                    selected_model = excluded.selected_model,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, model, utc_now()),
+            )
+
+    def sync_artifacts(
+        self,
+        task_id: int,
+        artifacts: list[ArtifactInput],
+    ) -> list[Artifact]:
+        keys = {
+            (artifact.task_dir, artifact.relative_path)
+            for artifact in artifacts
+        }
+        with self.connect() as conn:
+            existing = conn.execute(
+                """
+                select id, task_dir, relative_path
+                from artifacts
+                where task_id = ?
+                """,
+                (task_id,),
+            ).fetchall()
+            for row in existing:
+                key = (str(row["task_dir"]), str(row["relative_path"]))
+                if key not in keys:
+                    conn.execute(
+                        "delete from artifacts where id = ?",
+                        (int(row["id"]),),
+                    )
+
+            for artifact in artifacts:
+                conn.execute(
+                    """
+                    insert into artifacts (
+                        task_id, turn_id, task_dir, display_name, relative_path,
+                        file_size, created_at
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?)
+                    on conflict(task_id, task_dir, relative_path) do update set
+                        turn_id = excluded.turn_id,
+                        display_name = excluded.display_name,
+                        file_size = excluded.file_size,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        task_id,
+                        artifact.turn_id,
+                        artifact.task_dir,
+                        artifact.display_name,
+                        artifact.relative_path,
+                        artifact.file_size,
+                        artifact.created_at,
+                    ),
+                )
+
+            rows = conn.execute(
+                """
+                select * from artifacts
+                where task_id = ?
+                order by id asc
+                """,
+                (task_id,),
+            ).fetchall()
+            return [self._artifact(row) for row in rows]
+
+    def get_turn_id_for_task_dir(
+        self,
+        task_id: int,
+        task_dir: str,
+    ) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                select id from task_turns
+                where task_id = ? and task_dir = ?
+                order by id desc
+                limit 1
+                """,
+                (task_id, task_dir),
+            ).fetchone()
+            return int(row["id"]) if row else None
+
+    def get_artifacts(self, task_id: int) -> list[Artifact]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select * from artifacts
+                where task_id = ?
+                order by id asc
+                """,
+                (task_id,),
+            ).fetchall()
+            return [self._artifact(row) for row in rows]
+
+    def get_artifact(self, artifact_id: int) -> Artifact | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "select * from artifacts where id = ?",
+                (artifact_id,),
+            ).fetchone()
+            return self._artifact(row) if row else None
 
     def get_task(self, task_id: int, chat_id: int) -> Task | None:
         with self.connect() as conn:
@@ -586,6 +783,7 @@ class TaskStore:
             parent_task_id=row["parent_task_id"],
             session_status=str(row["session_status"]),
             last_activity_at=row["last_activity_at"],
+            model=row["model"],
         )
 
     @staticmethod
@@ -599,4 +797,18 @@ class TaskStore:
             log_path=row["log_path"],
             output_path=row["output_path"],
             error_message=row["error_message"],
+            model=row["model"],
+        )
+
+    @staticmethod
+    def _artifact(row: sqlite3.Row) -> Artifact:
+        return Artifact(
+            id=int(row["id"]),
+            task_id=int(row["task_id"]),
+            turn_id=int(row["turn_id"]) if row["turn_id"] is not None else None,
+            task_dir=str(row["task_dir"]),
+            display_name=str(row["display_name"]),
+            relative_path=str(row["relative_path"]),
+            file_size=int(row["file_size"]),
+            created_at=str(row["created_at"]),
         )

@@ -36,7 +36,7 @@ Telegram 使用者
 - 僅自動傳送 `.delivery.json` 明確指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
-- 支援 `/file <task_id>` 重新下載 final output 與 artifacts。
+- 支援 `/file <task_id>` 以互動按鈕選擇下載 final output 與 artifacts。
 - 保留 `/run <prompt>` 作為舊式單次任務相容指令。
 - 支援 `/help` 列出所有目前可用的指令與功能。
 - 所有 Task ID 操作都驗證所屬 chat ID，避免跨 chat 存取。
@@ -167,7 +167,8 @@ tasks/
 /end
 /run <task prompt>
 /status
-/file <task_id>
+/model [model_id]
+/file <task_id> [artifact_id]
 /result <task_id>
 /log <task_id>
 /continue <task_id>
@@ -195,8 +196,14 @@ Telegram 的 Bot 指令選單。
 `/status` 會顯示目前 chat 最近五筆 Task 的執行狀態、session 狀態與初始
 prompt 摘要。
 
-`/file <task_id>` 只允許原任務所屬的 Telegram chat 下載，並傳送該 Task
-最新一輪的 `final.md` 與 artifacts。新任務完成時只會自動傳送
+`/model` 會顯示目前模型與伺服器允許的模型白名單，並提供按鈕切換。
+也可使用 `/model <model_id>` 直接切換。模型偏好以 Telegram chat 為範圍
+保存，Bot 重啟後仍會保留，並從下一個新建 Turn 開始生效。
+
+`/file <task_id>` 只允許原任務所屬的 Telegram chat 使用，並列出該 Task
+最新一輪的 `final.md` 與 artifacts。使用者可用 Inline Keyboard 選擇單一
+產物、換頁或下載全部；也可使用 `/file <task_id> <artifact_id>` 作為文字
+備援。新任務完成時只會自動傳送
 `.delivery.json` 明確列出的附件；一般問答即使意外建立 Markdown 檔，也不會
 自動作為附件傳送。
 
@@ -224,6 +231,8 @@ ALLOWED_CHAT_IDS=123456789
 DEFAULT_WORKSPACE=/home/ai-agent
 CODEX_BIN=/home/ai-agent/.local/bin/codex
 CODEX_SANDBOX_MODE=danger-full-access
+CODEX_MODELS=gpt-5.5,gpt-5.4,gpt-5.4-mini
+CODEX_DEFAULT_MODEL=gpt-5.5
 TASK_TIMEOUT_SECONDS=5400
 DATABASE_PATH=/home/ai-agent/codex-telegram-agent/data/tasks.sqlite3
 TASKS_DIR=/home/ai-agent/codex-telegram-agent/tasks
@@ -373,7 +382,6 @@ cd /home/ai-agent/codex-telegram-agent
 ## 待開發功能
 
 - 任務取消。
-- `/files <task_id>` artifact 清單。
-- Artifact metadata 資料表。
+- 超過 Telegram 上限時的替代檔案下載方式。
 - 多專案 workspace 白名單。
 - systemd 常駐服務與自動重啟。

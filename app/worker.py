@@ -12,6 +12,7 @@ from app.artifacts import (
     TASK_LOG_NAME,
     delivered_artifact_files,
     prepare_task_directory,
+    sync_artifact_metadata,
     task_directory,
     turn_directory,
 )
@@ -90,6 +91,7 @@ class Worker:
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
             session_id=task.codex_session_id,
+            model=turn.model,
         )
 
         if result.session_id:
@@ -117,7 +119,9 @@ class Worker:
                 parent_task_id=task.parent_task_id,
                 session_status=task.session_status,
                 last_activity_at=task.last_activity_at,
+                model=turn.model,
             )
+            sync_artifact_metadata(self.store, completed_task)
             await self.send_artifacts(completed_task)
             return
 
@@ -150,6 +154,7 @@ class Worker:
             log_path=log_path,
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
+            model=task.model,
         )
 
         if result.exit_code == 0:
@@ -173,6 +178,7 @@ class Worker:
                     "codex_session_id": result.session_id,
                 }
             )
+            sync_artifact_metadata(self.store, completed_task)
             await self.send_artifacts(completed_task)
         else:
             message = f"Codex exited with code {result.exit_code}. See log: {log_path}"

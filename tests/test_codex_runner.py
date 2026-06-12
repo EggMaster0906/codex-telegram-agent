@@ -55,6 +55,21 @@ class CodexRunnerTests(unittest.TestCase):
             ["resume", "session-123", "do the work"],
         )
 
+        model_command = build_codex_command(
+            **common,
+            session_id="session-123",
+            model="gpt-test",
+        )
+        self.assertIn("--model", model_command)
+        self.assertEqual(
+            model_command[model_command.index("--model") + 1],
+            "gpt-test",
+        )
+        self.assertLess(
+            model_command.index("--model"),
+            model_command.index("resume"),
+        )
+
     def test_adds_existing_input_directory(self) -> None:
         input_dir = Path("/tmp")
         command = build_codex_command(

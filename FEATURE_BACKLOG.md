@@ -15,8 +15,8 @@
 - [x] `/result`、`/log`、`/file` 與 `/status`
 - [x] Telegram 附件輸入
 - [ ] 任務取消
-- [ ] Artifact metadata 與互動式 `/file` 產物選擇
-- [ ] `/model` 模型切換
+- [x] Artifact metadata 與互動式 `/file` 產物選擇
+- [x] `/model` 模型切換
 - [ ] 多 workspace 管理
 - [ ] systemd 常駐服務
 
@@ -39,7 +39,7 @@
 /status
 /result <task_id>
 /log <task_id>
-/file <task_id>
+/file <task_id> [artifact_id]
 ```
 
 ### 已完成行為
@@ -66,7 +66,7 @@
 - `/status` 顯示最近五筆 Task 的執行狀態與 session 狀態。
 - `/result <task_id>` 分段回傳最新一輪 final output。
 - `/log <task_id>` 回傳最新一輪最近 80 行、最多 12,000 字元的 log。
-- `/file <task_id>` 傳送最新一輪 final output 與 artifacts。
+- `/file <task_id>` 列出最新一輪 final output 與 artifacts，供使用者選擇下載。
 - final output 超過 Telegram 單則訊息限制時會自動分段。
 - 一般回答預設只交付文字。
 - 只有 `.delivery.json` 指定的 artifacts 會在完成時自動傳送。
@@ -106,7 +106,9 @@ task_turns
 
 ```text
 /file <task_id>
-  傳送指定任務最新一輪的 final.md 與 artifacts。
+  列出指定任務最新一輪的 final.md 與 artifacts。
+  可點選單一產物、換頁或下載全部。
+  亦可使用 /file <task_id> <artifact_id> 下載指定項目。
   若任務尚未產生檔案，回覆目前 task status。
   只允許原任務所屬的 Telegram chat 下載。
 ```
@@ -136,7 +138,7 @@ tasks/
 - 任務完成後依 `.delivery.json` 傳送指定 artifacts。
 - manifest 缺少、格式錯誤或指定純文字時，不會自動傳送附件。
 - 附件路徑會拒絕絕對路徑、路徑穿越、隱藏檔、重複檔案與 symlink。
-- `/file <task_id>` 可重新下載最新一輪的 `final.md` 與 artifacts。
+- `/file <task_id>` 可列出並選擇下載最新一輪的 `final.md` 與 artifacts。
 - 下載時檢查 task 所屬 `chat_id`，避免跨使用者存取。
 - SQLite 啟動時自動 migration，為既有資料庫加入 `task_dir` 欄位。
 - `CODEX_SANDBOX_MODE` 可由環境變數設定。
@@ -152,9 +154,7 @@ tasks/
 
 ### 後續擴充方向
 
-- 將 artifact metadata 寫入資料庫，而非每次掃描 Task 目錄。
-- 支援 `/files <task_id>` 列出指定任務可下載的產物。
-- 加入 Telegram 檔案大小檢查與超過限制時的替代下載方式。
+- 為超過 Telegram 傳送限制的檔案提供替代下載方式。
 
 ## 3. Telegram 附件輸入（已完成）
 
@@ -205,7 +205,9 @@ tasks/
 - 使用 Telegram 雲端 Bot API 的 20 MB 下載上限；尚未導入 Local Bot API
   Server 或替代下載管道。
 
-## 4. 互動式 `/file` 產物選擇（待開發）
+## 4. 互動式 `/file` 產物選擇（已完成）
+
+完成日期：2026-06-12
 
 ### 目標
 
@@ -230,7 +232,7 @@ tasks/
 - 若 Inline Keyboard 無法使用或 callback 已失效，提供
   `/file <task_id> <artifact_id>` 文字指令作為備援。
 
-### 初步實作方向
+### 已完成行為
 
 - 將 artifact metadata 寫入資料庫，包含短識別碼、Task、Turn、顯示名稱、
   實際路徑、檔案大小與建立時間。
@@ -249,7 +251,9 @@ tasks/
 - 清單超過單頁容量時可正常換頁。
 - 文字備援指令可在不使用按鈕的情況下完成下載。
 
-## 5. `/model` 模型切換（待開發）
+## 5. `/model` 模型切換（已完成）
+
+完成日期：2026-06-12
 
 ### 目標
 
@@ -274,22 +278,21 @@ tasks/
   解析，避免任意參數注入。
 - 若 Inline Keyboard 不可用，使用者仍可透過 `/model <model_id>` 手動選擇。
 
-### 待確認事項
+### 已完成行為
 
-- 可用模型清單的來源：環境設定白名單、Codex CLI 能力查詢，或兩者結合。
-- 模型設定的作用範圍：僅目前 session、目前 Telegram chat，或全域預設值。
-- 切換模型後是否立即套用至目前 Task 的下一個 Turn。
-- 恢復既有 session 時，Codex CLI 是否允許安全地指定不同模型，以及不同模型
-  間的 session 相容性。
-- 模型不可用、權限不足或 CLI 拒絕切換時的回復與提示方式。
-
-### 初步實作方向
-
-- 第一版以伺服器端設定的模型白名單為準，不直接接受未驗證的模型名稱。
-- 在資料庫保存選定模型及其作用範圍，建立 Turn 時將模型傳給 Codex CLI。
-- `/model` 顯示目前選擇、可用清單及 Inline Keyboard。
-- Callback Query 與文字指令共用同一套模型驗證及切換邏輯。
-- 切換成功後編輯原訊息或回覆確認，並標示從哪一個 Turn 開始生效。
+- 使用 `CODEX_MODELS` 設定伺服器端模型白名單，`CODEX_DEFAULT_MODEL` 設定
+  預設模型；預設模型必須包含於白名單。
+- 模型偏好以 Telegram chat 為作用範圍，保存於 SQLite `chat_settings`，
+  Bot 重啟後仍會保留。
+- 建立 Task/Turn 時將當下選定模型快照至資料庫；切換只影響下一個新建 Turn，
+  不修改已排隊或執行中的 Turn。
+- Codex CLI 新 session 與 `exec resume` 均透過 `--model` 指定該 Turn 模型。
+- `/model` 顯示目前模型及完整白名單，並提供 Inline Keyboard。
+- `/model <model_id>` 與 Callback Query 共用同一份白名單驗證。
+- callback data 只保存模型索引，不直接接受任意 CLI 參數。
+- 若資料庫中的舊偏好已被移出白名單，自動回退至目前預設模型。
+- `tasks.model` 保存 Task 最新模型，`task_turns.model` 保存每輪實際模型，
+  `/status` 也會顯示模型資訊。
 
 ### 驗收條件
 
