@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import tempfile
@@ -57,6 +58,58 @@ class FakeBot:
 
 
 class WorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_continues_after_one_turn_crashes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            first_task_id, _ = store.create_session(123, "first", root)
+            second_task_id, _ = store.create_session(123, "second", root)
+            settings = Settings(
+                telegram_bot_token="test",
+                allowed_chat_ids={123},
+                default_workspace=root,
+                codex_bin="codex",
+                codex_sandbox_mode="workspace-write",
+                task_timeout_seconds=60,
+                database_path=root / "tasks.sqlite3",
+                tasks_dir=root / "tasks",
+                worker_poll_seconds=0.01,
+                session_timeout_seconds=86400,
+            )
+            worker = Worker(settings, store, FakeBot())
+            calls = 0
+            second_completed = asyncio.Event()
+
+            async def fake_run_codex(**kwargs: object) -> CodexResult:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise RuntimeError("broken output stream")
+
+                output_path = kwargs["output_path"]
+                artifact_dir = kwargs["artifact_dir"]
+                assert isinstance(output_path, Path)
+                assert isinstance(artifact_dir, Path)
+                output_path.write_text("done", encoding="utf-8")
+                (artifact_dir / ".delivery.json").write_text(
+                    json.dumps({"delivery": "text", "attachments": []}),
+                    encoding="utf-8",
+                )
+                second_completed.set()
+                return CodexResult(0, "session-2")
+
+            with patch("app.worker.run_codex", side_effect=fake_run_codex):
+                worker_task = asyncio.create_task(worker.run_forever())
+                await asyncio.wait_for(second_completed.wait(), timeout=1)
+                while store.get_task(second_task_id, 123).status != "done":
+                    await asyncio.sleep(0)
+                worker.stop()
+                await worker_task
+
+            self.assertEqual(store.get_task(first_task_id, 123).status, "failed")
+            self.assertEqual(store.get_task(second_task_id, 123).status, "done")
+
     async def test_followup_turn_resumes_saved_codex_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

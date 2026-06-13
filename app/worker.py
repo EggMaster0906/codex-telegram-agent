@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from telegram import Bot
@@ -22,6 +23,9 @@ from app.db import Task, TaskStore, TaskTurn
 from app.telegram_delivery import send_markdown_text
 
 
+logger = logging.getLogger(__name__)
+
+
 class Worker:
     def __init__(self, settings: Settings, store: TaskStore, bot: Bot) -> None:
         self.settings = settings
@@ -36,15 +40,65 @@ class Worker:
         while not self._stopped.is_set():
             turn = self.store.next_pending_turn()
             if turn is not None:
-                await self.run_turn(turn)
+                await self.run_turn_safely(turn)
                 continue
 
             task = self.store.next_pending()
             if task is not None:
-                await self.run_legacy_task(task)
+                await self.run_legacy_task_safely(task)
                 continue
 
             await asyncio.sleep(self.settings.worker_poll_seconds)
+
+    async def run_turn_safely(self, turn: TaskTurn) -> None:
+        try:
+            await self.run_turn(turn)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Task #%s turn #%s crashed",
+                turn.task_id,
+                turn.id,
+            )
+            message = f"Worker error: {type(exc).__name__}: {exc}"
+            self.store.mark_turn_failed(turn.id, turn.task_id, message)
+            task = self.store.get_task_by_id(turn.task_id)
+            if task is not None:
+                await self.send_message_safely(
+                    task.chat_id,
+                    f"Task #{task.id} failed.\n{message}",
+                )
+
+    async def run_legacy_task_safely(self, task: Task) -> None:
+        try:
+            await self.run_legacy_task(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("Task #%s crashed", task.id)
+            message = f"Worker error: {type(exc).__name__}: {exc}"
+            self.store.mark_failed(task.id, message)
+            await self.send_message_safely(
+                task.chat_id,
+                f"Task #{task.id} failed.\n{message}",
+            )
+
+    async def send_message_safely(self, chat_id: int, text: str) -> bool:
+        try:
+            await self.bot.send_message(chat_id, text)
+        except TelegramError:
+            logger.exception("Could not send Telegram message to chat %s", chat_id)
+            return False
+        return True
+
+    async def send_markdown_safely(self, chat_id: int, text: str) -> bool:
+        try:
+            await send_markdown_text(self.bot, chat_id, text)
+        except TelegramError:
+            logger.exception("Could not send Telegram result to chat %s", chat_id)
+            return False
+        return True
 
     async def run_turn(self, turn: TaskTurn) -> None:
         task = self.store.get_task_by_id(turn.task_id)
@@ -55,7 +109,7 @@ class Worker:
         if not first_turn and not task.codex_session_id:
             message = "Codex session is unavailable because its first turn did not start."
             self.store.mark_turn_failed(turn.id, task.id, message)
-            await self.bot.send_message(
+            await self.send_message_safely(
                 task.chat_id,
                 f"Task #{task.id} could not continue.\n{message}",
             )
@@ -78,7 +132,10 @@ class Worker:
         )
 
         if first_turn:
-            await self.bot.send_message(task.chat_id, f"Task #{task.id} started.")
+            await self.send_message_safely(
+                task.chat_id,
+                f"Task #{task.id} started.",
+            )
 
         result = await run_codex(
             codex_bin=self.settings.codex_bin,
@@ -104,7 +161,7 @@ class Worker:
                 if output_path.exists()
                 else "(empty output)"
             )
-            await send_markdown_text(self.bot, task.chat_id, final_text)
+            await self.send_markdown_safely(task.chat_id, final_text)
             completed_task = Task(
                 id=task.id,
                 chat_id=task.chat_id,
@@ -130,7 +187,10 @@ class Worker:
         else:
             message = f"Codex exited with code {result.exit_code}. See log: {log_path}"
         self.store.mark_turn_failed(turn.id, task.id, message)
-        await self.bot.send_message(task.chat_id, f"Task #{task.id} failed.\n{message}")
+        await self.send_message_safely(
+            task.chat_id,
+            f"Task #{task.id} failed.\n{message}",
+        )
 
     async def run_legacy_task(self, task: Task) -> None:
         task_dir = (
@@ -142,7 +202,10 @@ class Worker:
         log_path = task_dir / TASK_LOG_NAME
         output_path = task_dir / FINAL_OUTPUT_NAME
         self.store.mark_running(task.id, task_dir, log_path, output_path)
-        await self.bot.send_message(task.chat_id, f"Task #{task.id} started.")
+        await self.send_message_safely(
+            task.chat_id,
+            f"Task #{task.id} started.",
+        )
 
         result = await run_codex(
             codex_bin=self.settings.codex_bin,
@@ -167,7 +230,10 @@ class Worker:
                 else "(empty output)"
             )
             header = f"Task #{task.id} done.\n\n"
-            await send_markdown_text(self.bot, task.chat_id, header + final_text)
+            await self.send_markdown_safely(
+                task.chat_id,
+                header + final_text,
+            )
             completed_task = Task(
                 **{
                     **task.__dict__,
@@ -183,7 +249,10 @@ class Worker:
         else:
             message = f"Codex exited with code {result.exit_code}. See log: {log_path}"
             self.store.mark_failed(task.id, message)
-            await self.bot.send_message(task.chat_id, f"Task #{task.id} failed.\n{message}")
+            await self.send_message_safely(
+                task.chat_id,
+                f"Task #{task.id} failed.\n{message}",
+            )
 
     async def send_artifacts(self, task: Task) -> None:
         files = delivered_artifact_files(task)
@@ -196,7 +265,7 @@ class Worker:
                         caption=f"Task #{task.id}: {path.name}",
                     )
             except (OSError, TelegramError) as exc:
-                await self.bot.send_message(
+                await self.send_message_safely(
                     task.chat_id,
                     f"Task #{task.id} could not send {path.name}: {exc}",
                 )
