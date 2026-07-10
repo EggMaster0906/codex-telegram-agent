@@ -18,6 +18,7 @@
 - [x] Artifact metadata 與互動式 `/file` 產物選擇
 - [x] `/model` 模型切換
 - [ ] Claude Code CLI 執行器與 Agent 切換
+- [ ] Antigravity CLI 執行器整合評估
 - [ ] 多 workspace 管理
 - [ ] systemd 常駐服務
 
@@ -441,3 +442,108 @@ Claude sandbox。若任務確實需要任意 shell command，應先完成容器�
 - API key 不出現在 Telegram、prompt、log、SQLite 或 artifact。
 - timeout、max turns、預算上限、權限拒絕與 CLI 異常均有清楚錯誤訊息。
 - 既有 Codex Task 與 database migration 後的 session resume 不受影響。
+
+## 7. Antigravity CLI 執行器整合（評估中）
+
+評估日期：2026-07-11（臺北時間）
+
+### 背景
+
+Google 已在 2026-05-19 官方公告將個人與 Google AI Pro / Ultra 使用者的
+Gemini CLI 逐步轉向 Antigravity CLI，並於 2026-06-18 停止 Gemini CLI 及
+Gemini Code Assist 個人版相關請求服務。企業授權與 Google Cloud 相關方案則
+暫時維持既有 Gemini CLI 支援。Antigravity CLI 的官方命令為 `agy`，定位是
+可在 terminal、SSH 與低資源環境使用的 agent-first coding CLI。
+
+參考來源：
+
+- Google Developers Blog: `https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/`
+- Antigravity CLI GitHub: `https://github.com/google-antigravity/antigravity-cli`
+- Antigravity CLI releases: `https://github.com/google-antigravity/antigravity-cli/releases`
+
+### 可行性結論
+
+技術上可行，但不建議直接用 `AGY_BIN=agy` 替換現有 `CODEX_BIN`。目前專案
+依賴 Codex 專屬協定與參數，例如 `codex exec --json`、
+`--output-last-message`、`thread.started` 事件中的 `thread_id`，以及
+`codex exec resume <session_id>`。Antigravity CLI 雖然具備非互動
+`-p` / `--print`、sandbox、model、conversation resume、agent/subagent 與
+plugin 能力，但實際可機器解析的 session ID、final output 與錯誤格式必須以
+部署版本 `agy --help` 與 smoke test 再確認。
+
+因此建議採用 provider-neutral runner abstraction，讓 Codex、Claude Code 與
+Antigravity 都是同一個 worker 可分派的執行器，而不是把 Telegram bot 或 DB
+邏輯直接綁定到某個 CLI。
+
+### 現有架構接入點
+
+- Telegram handler、SQLite queue、Task/Turn 目錄、附件輸入、artifact
+  manifest 與 Telegram delivery 可大致沿用。
+- CLI subprocess 執行集中在 `app/codex_runner.py`，worker 主要在
+  `app/worker.py` 呼叫 `run_codex()`；這是抽象化 runner 的主要切入點。
+- `app/config.py` 目前使用 `CODEX_BIN`、`CODEX_SANDBOX_MODE`、
+  `CODEX_MODELS` 與 `CODEX_DEFAULT_MODEL`，後續可擴充為 provider-specific
+  設定。
+- DB 目前欄位仍以 `codex_session_id` 命名；若支援多 provider，應新增
+  `agent_provider`、`agent_session_id` 或等價欄位，並 migration 既有 task
+  為 `codex`。
+
+### Antigravity CLI 初步能力判讀
+
+- `agy` 是官方 CLI 入口，官方 README 強調支援 terminal、SSH 與 low-overhead
+  workflow。
+- release notes 顯示近期版本支援 `--model`、`--sandbox`、`--conversation` /
+  `-c`、`--print` / `-p`、`--agent`、agent/agents subcommand、plugins、MCP、
+  subagents、permissions 與 artifacts viewer。
+- 2026-07-10 的 `1.1.1` release 修正了 `agy -p` 在 shell script 或
+  subprocess 中可能 hang 的問題，也修正 print mode server-side 失敗卻以成功
+  exit code 與空輸出結束的問題。這對本專案 background worker 呼叫 CLI 很重要。
+- 仍需實測 `agy -p` 是否能穩定輸出純文字或 JSON、是否有等價 Codex
+  `--output-last-message` 的參數，以及 resume command 是否可完全非互動使用。
+
+### 主要風險
+
+- Session resume 協定尚未在本機驗證。若 `agy` 的 conversation ID 只適合 TUI
+  或本機互動使用，Telegram follow-up 需要另行設計。
+- 非互動 final output 格式未驗證。現有流程依賴 `final.md` 作為 Telegram
+  文字回覆來源；Antigravity runner 可能需要自行解析 stdout/stderr 或 JSON。
+- 權限模型與 sandbox 行為不同。不能假設 Codex 的 `workspace-write` 或
+  `danger-full-access` 可直接映射到 Antigravity。
+- 首次認證可能需要 Google OAuth、system keyring 或 GCP project onboarding；
+  在 headless Linux / SSH / systemd 環境需特別驗證。
+- Antigravity CLI 目前變動速度高，release notes 顯示 1.0.x 到 1.1.x 持續修
+  subprocess、permissions、conversation 與 sandbox 相關 bug，第一版整合應保守。
+- 依官方 README，使用者需注意 coding agents 的 autonomous code execution、
+  data exfiltration、prompt injection 與 supply chain 風險；導入後不應擴大
+  `ai-agent` 帳號權限。
+
+### 建議整合路線
+
+1. 先在遠端主機安裝 `agy`，完成 Google OAuth 或 GCP project onboarding，並記錄
+   安裝路徑與版本。
+2. 執行 `agy --help`、`agy -p "ping"`、指定 model、指定 sandbox、失敗案例、
+   timeout 與 resume smoke test，確認可被 background worker 穩定呼叫。
+3. 建立 provider-neutral runner contract，讓 runner 回傳 exit code、provider
+   session ID、final text 與可選 usage metadata。
+4. 先新增 Antigravity runner 的單輪 `/run` 或內部 feature flag，不立即接上
+   `/new` 多輪 session。
+5. 確認 final output、log、timeout、process group kill、artifact manifest 與
+   `/result`、`/log`、`/file` 都正常後，再啟用 session resume。
+6. 將 `/agent` 與 `/model` 改為 provider-aware，模型白名單依 Codex、Claude、
+   Antigravity 分開管理。
+7. 完成 migration 與回滾策略後，再允許正式 Telegram 使用者選擇 Antigravity。
+
+### 驗收條件
+
+- `agy` 可在 SSH / 非 TTY / background subprocess 中穩定完成單輪任務。
+- Antigravity runner 能將最終文字寫入現有 `final.md`，並將完整 stdout/stderr
+  寫入 task log。
+- 第一輪可取得可 resume 的 provider session ID，後續 Turn 可接續同一對話。
+- Antigravity Task 可沿用 Telegram 附件輸入、artifact manifest、`/result`、
+  `/log`、`/file`、`/status`、`/end` 與 `/continue`。
+- provider 與 model 白名單互相隔離，不會把 Codex model ID 傳給 Antigravity，
+  也不會反向混用。
+- OAuth token、GCP credentials、API key 或其他 secrets 不出現在 prompt、log、
+  SQLite、artifact 或 Telegram 回覆中。
+- CLI timeout、權限拒絕、server-side error、空輸出與 resume 失敗都有清楚錯誤訊息。
+- 既有 Codex Task、session resume 與 database migration 不受影響。
