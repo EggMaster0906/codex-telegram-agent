@@ -32,6 +32,7 @@ class Task:
 class TaskTurn:
     id: int
     task_id: int
+    turn_number: int
     prompt: str
     status: str
     task_dir: str | None
@@ -128,6 +129,7 @@ class TaskStore:
                 create table if not exists task_turns (
                     id integer primary key autoincrement,
                     task_id integer not null,
+                    turn_number integer not null,
                     prompt text not null,
                     status text not null,
                     task_dir text,
@@ -148,6 +150,27 @@ class TaskStore:
             }
             if "model" not in turn_columns:
                 conn.execute("alter table task_turns add column model text")
+            if "turn_number" not in turn_columns:
+                conn.execute("alter table task_turns add column turn_number integer")
+            conn.execute(
+                """
+                update task_turns
+                set turn_number = (
+                    select count(*)
+                    from task_turns as previous
+                    where previous.task_id = task_turns.task_id
+                      and previous.id <= task_turns.id
+                )
+                where turn_number is null
+                """
+            )
+            conn.execute(
+                """
+                create unique index if not exists
+                idx_task_turns_task_id_turn_number
+                on task_turns(task_id, turn_number)
+                """
+            )
 
             conn.execute(
                 """
@@ -299,14 +322,33 @@ class TaskStore:
         status: str = "pending",
         model: str | None = None,
     ) -> int:
+        turn_number_row = conn.execute(
+            """
+            select coalesce(max(turn_number), 0) + 1 as next_turn_number
+            from task_turns
+            where task_id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        turn_number = int(turn_number_row["next_turn_number"])
         cursor = conn.execute(
             """
-            insert into task_turns (task_id, prompt, status, model, created_at)
-            values (?, ?, ?, ?, ?)
+            insert into task_turns (
+                task_id, turn_number, prompt, status, model, created_at
+            )
+            values (?, ?, ?, ?, ?, ?)
             """,
-            (task_id, prompt, status, model, created_at),
+            (task_id, turn_number, prompt, status, model, created_at),
         )
         return int(cursor.lastrowid)
+
+    def get_turn_number(self, turn_id: int) -> int | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "select turn_number from task_turns where id = ?",
+                (turn_id,),
+            ).fetchone()
+            return int(row["turn_number"]) if row else None
 
     def queue_uploaded_turn(
         self,
@@ -372,6 +414,113 @@ class TaskStore:
                 "update task_turns set task_dir = ? where id = ?",
                 (str(task_dir), turn_id),
             )
+
+    def reconcile_turn_directories(self, tasks_dir: Path) -> list[tuple[Path, Path]]:
+        moved: list[tuple[Path, Path]] = []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                select
+                    id, task_id, turn_number, task_dir, log_path, output_path
+                from task_turns
+                where task_dir is not null
+                order by task_id asc, turn_number asc, id asc
+                """
+            ).fetchall()
+
+            for row in rows:
+                task_id = int(row["task_id"])
+                turn_number = int(row["turn_number"])
+                expected_dir = (
+                    tasks_dir
+                    / f"task-{task_id:06d}"
+                    / f"turn-{turn_number:06d}"
+                )
+                current_dir = Path(str(row["task_dir"]))
+                if current_dir == expected_dir:
+                    continue
+
+                current_parent = current_dir.resolve().parent
+                expected_parent = expected_dir.resolve().parent
+                if current_parent != expected_parent:
+                    continue
+                if not current_dir.name.startswith("turn-"):
+                    continue
+
+                if expected_dir.exists():
+                    if current_dir.exists():
+                        continue
+                elif current_dir.exists():
+                    expected_dir.parent.mkdir(parents=True, exist_ok=True)
+                    current_dir.rename(expected_dir)
+                    moved.append((current_dir, expected_dir))
+                else:
+                    continue
+
+                old_dir = str(current_dir)
+                new_dir = str(expected_dir)
+                new_log_path = self._replace_directory_prefix(
+                    row["log_path"],
+                    current_dir,
+                    expected_dir,
+                )
+                new_output_path = self._replace_directory_prefix(
+                    row["output_path"],
+                    current_dir,
+                    expected_dir,
+                )
+                conn.execute(
+                    """
+                    update task_turns
+                    set task_dir = ?, log_path = ?, output_path = ?
+                    where id = ?
+                    """,
+                    (new_dir, new_log_path, new_output_path, int(row["id"])),
+                )
+                conn.execute(
+                    """
+                    update artifacts
+                    set task_dir = ?
+                    where task_id = ? and task_dir = ?
+                    """,
+                    (new_dir, task_id, old_dir),
+                )
+                conn.execute(
+                    "update tasks set task_dir = ? where id = ? and task_dir = ?",
+                    (new_dir, task_id, old_dir),
+                )
+                if new_log_path is not None:
+                    conn.execute(
+                        "update tasks set log_path = ? where id = ? and log_path = ?",
+                        (new_log_path, task_id, row["log_path"]),
+                    )
+                if new_output_path is not None:
+                    conn.execute(
+                        """
+                        update tasks
+                        set output_path = ?
+                        where id = ? and output_path = ?
+                        """,
+                        (new_output_path, task_id, row["output_path"]),
+                    )
+
+        return moved
+
+    @staticmethod
+    def _replace_directory_prefix(
+        value: object,
+        old_dir: Path,
+        new_dir: Path,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        path = Path(str(value))
+        try:
+            relative_path = path.resolve().relative_to(old_dir.resolve())
+        except ValueError:
+            return str(value)
+        return str(new_dir / relative_path)
 
     def set_codex_session_id(self, task_id: int, session_id: str) -> None:
         with self.connect() as conn:
@@ -522,10 +671,14 @@ class TaskStore:
     def is_first_turn(self, task_id: int, turn_id: int) -> bool:
         with self.connect() as conn:
             row = conn.execute(
-                "select min(id) as first_id from task_turns where task_id = ?",
-                (task_id,),
+                """
+                select turn_number
+                from task_turns
+                where task_id = ? and id = ?
+                """,
+                (task_id, turn_id),
             ).fetchone()
-            return row is not None and int(row["first_id"]) == turn_id
+            return row is not None and int(row["turn_number"]) == 1
 
     def has_turns(self, task_id: int) -> bool:
         with self.connect() as conn:
@@ -791,6 +944,7 @@ class TaskStore:
         return TaskTurn(
             id=int(row["id"]),
             task_id=int(row["task_id"]),
+            turn_number=int(row["turn_number"]),
             prompt=str(row["prompt"]),
             status=str(row["status"]),
             task_dir=row["task_dir"],

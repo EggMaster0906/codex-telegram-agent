@@ -137,7 +137,7 @@ class Worker:
         turn_dir = (
             Path(turn.task_dir)
             if turn.task_dir
-            else turn_directory(self.settings.tasks_dir, task.id, turn.id)
+            else turn_directory(self.settings.tasks_dir, task.id, turn.turn_number)
         )
         artifact_dir = prepare_task_directory(turn_dir, turn.prompt)
         log_path = turn_dir / TASK_LOG_NAME
