@@ -48,6 +48,27 @@ class TaskStoreTests(unittest.TestCase):
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    insert into tasks (
+                        id, chat_id, prompt, status, workspace_path, created_at
+                    )
+                    values
+                        (1, 123, 'old first', 'done', '/tmp', '2026-01-01T00:00:00+00:00'),
+                        (2, 123, 'old second', 'done', '/tmp', '2026-01-01T00:00:00+00:00')
+                    """
+                )
+                conn.execute(
+                    """
+                    insert into task_turns (
+                        id, task_id, prompt, status, created_at
+                    )
+                    values
+                        (1, 1, 'old first turn', 'done', '2026-01-01T00:00:00+00:00'),
+                        (2, 1, 'old second turn', 'done', '2026-01-01T00:01:00+00:00'),
+                        (3, 2, 'old other task', 'done', '2026-01-01T00:02:00+00:00')
+                    """
+                )
 
             store = TaskStore(database_path)
             store.init()
@@ -68,7 +89,23 @@ class TaskStoreTests(unittest.TestCase):
                 }
             self.assertIn("model", task_columns)
             self.assertIn("model", turn_columns)
+            self.assertIn("turn_number", turn_columns)
             self.assertIn("artifacts", artifact_tables)
+            with store.connect() as conn:
+                migrated_turn_numbers = conn.execute(
+                    """
+                    select task_id, id, turn_number
+                    from task_turns
+                    order by id
+                    """
+                ).fetchall()
+            self.assertEqual(
+                [
+                    (row["task_id"], row["id"], row["turn_number"])
+                    for row in migrated_turn_numbers
+                ],
+                [(1, 1, 1), (1, 2, 2), (2, 3, 1)],
+            )
             task_id = store.create_task(123, "hello", Path("/tmp"))
             task_dir = Path(temp_dir) / "tasks" / "task-000001"
             store.set_task_dir(task_id, task_dir)
@@ -107,12 +144,19 @@ class TaskStoreTests(unittest.TestCase):
             self.assertIsNotNone(first_task)
             self.assertEqual(first_task.id, first_task_id)
             self.assertTrue(store.is_first_turn(first_task_id, first_turn_id))
+            self.assertEqual(store.get_turn_number(first_turn_id), 1)
 
             second_turn_id = store.create_turn(first_task_id, "follow up")
             self.assertFalse(store.is_first_turn(first_task_id, second_turn_id))
+            self.assertEqual(store.get_turn_number(second_turn_id), 2)
 
-            second_task_id, _ = store.create_session(123, "second", Path("/tmp"))
+            second_task_id, second_task_first_turn_id = store.create_session(
+                123,
+                "second",
+                Path("/tmp"),
+            )
             self.assertEqual(store.get_active_task(123, 86400).id, second_task_id)
+            self.assertEqual(store.get_turn_number(second_task_first_turn_id), 1)
             self.assertEqual(
                 store.get_task(first_task_id, 123).session_status,
                 "ended",
@@ -163,6 +207,121 @@ class TaskStoreTests(unittest.TestCase):
             self.assertGreater(
                 datetime.fromisoformat(task.last_activity_at),
                 before,
+            )
+
+    def test_reconcile_turn_directories_renumbers_existing_standard_dirs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            tasks_dir = root / "tasks"
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            task_id, first_turn_id = store.create_session(
+                123,
+                "first",
+                root,
+            )
+            second_turn_id = store.create_turn(task_id, "second")
+            old_first_dir = tasks_dir / "task-000001" / "turn-000002"
+            old_second_dir = tasks_dir / "task-000001" / "turn-000003"
+            old_first_dir.mkdir(parents=True)
+            old_second_dir.mkdir(parents=True)
+            (old_first_dir / "task.log").write_text("first", encoding="utf-8")
+            (old_first_dir / "final.md").write_text("first", encoding="utf-8")
+            (old_second_dir / "task.log").write_text("second", encoding="utf-8")
+            (old_second_dir / "final.md").write_text("second", encoding="utf-8")
+
+            with store.connect() as conn:
+                conn.execute(
+                    """
+                    update task_turns
+                    set task_dir = ?, log_path = ?, output_path = ?
+                    where id = ?
+                    """,
+                    (
+                        str(old_first_dir),
+                        str(old_first_dir / "task.log"),
+                        str(old_first_dir / "final.md"),
+                        first_turn_id,
+                    ),
+                )
+                conn.execute(
+                    """
+                    update task_turns
+                    set task_dir = ?, log_path = ?, output_path = ?
+                    where id = ?
+                    """,
+                    (
+                        str(old_second_dir),
+                        str(old_second_dir / "task.log"),
+                        str(old_second_dir / "final.md"),
+                        second_turn_id,
+                    ),
+                )
+                conn.execute(
+                    """
+                    update tasks
+                    set task_dir = ?, log_path = ?, output_path = ?
+                    where id = ?
+                    """,
+                    (
+                        str(old_second_dir),
+                        str(old_second_dir / "task.log"),
+                        str(old_second_dir / "final.md"),
+                        task_id,
+                    ),
+                )
+            store.sync_artifacts(
+                task_id,
+                [
+                    ArtifactInput(
+                        turn_id=second_turn_id,
+                        task_dir=str(old_second_dir),
+                        display_name="artifacts/report.md",
+                        relative_path="artifacts/report.md",
+                        file_size=10,
+                        created_at="2026-01-01T00:00:00+00:00",
+                    )
+                ],
+            )
+
+            moved = store.reconcile_turn_directories(tasks_dir)
+
+            new_first_dir = tasks_dir / "task-000001" / "turn-000001"
+            new_second_dir = tasks_dir / "task-000001" / "turn-000002"
+            self.assertEqual(
+                [(old, new) for old, new in moved],
+                [
+                    (old_first_dir, new_first_dir),
+                    (old_second_dir, new_second_dir),
+                ],
+            )
+            self.assertTrue((new_first_dir / "final.md").is_file())
+            self.assertTrue((new_second_dir / "final.md").is_file())
+            self.assertFalse(old_second_dir.exists())
+
+            with store.connect() as conn:
+                turn_dirs = conn.execute(
+                    """
+                    select id, task_dir, log_path, output_path
+                    from task_turns
+                    where task_id = ?
+                    order by id
+                    """,
+                    (task_id,),
+                ).fetchall()
+            self.assertEqual(
+                [row["task_dir"] for row in turn_dirs],
+                [str(new_first_dir), str(new_second_dir)],
+            )
+            self.assertEqual(
+                store.get_task(task_id, 123).output_path,
+                str(new_second_dir / "final.md"),
+            )
+            self.assertEqual(
+                store.get_artifacts(task_id)[0].task_dir,
+                str(new_second_dir),
             )
 
     def test_uploaded_turn_is_not_pending_until_queued(self) -> None:

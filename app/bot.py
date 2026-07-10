@@ -62,6 +62,7 @@ from app.worker import Worker
 settings = load_settings()
 store = TaskStore(settings.database_path)
 store.init()
+store.reconcile_turn_directories(settings.tasks_dir)
 
 
 def selected_model_for_chat(chat_id: int) -> str | None:
@@ -147,7 +148,11 @@ async def new_session(
         settings.default_workspace,
         model=selected_model,
     )
-    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_id)
+    turn_number = store.get_turn_number(turn_id)
+    if turn_number is None:
+        await update.message.reply_text(f"Task #{task_id} could not create turn.")
+        return
+    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_number)
     prepare_task_directory(turn_dir, prompt)
     store.set_turn_dir(turn_id, turn_dir)
     await update.message.reply_text(f"Task #{task_id} queued as a new session.")
@@ -197,7 +202,11 @@ async def handle_message(
 
     selected_model = selected_model_for_chat(chat.id)
     turn_id = store.create_turn(task.id, prompt, model=selected_model)
-    turn_dir = turn_directory(settings.tasks_dir, task.id, turn_id)
+    turn_number = store.get_turn_number(turn_id)
+    if turn_number is None:
+        await update.message.reply_text(f"Task #{task.id} could not create turn.")
+        return
+    turn_dir = turn_directory(settings.tasks_dir, task.id, turn_number)
     prepare_task_directory(turn_dir, prompt)
     store.set_turn_dir(turn_id, turn_dir)
     await update.message.reply_text(f"Task #{task.id} follow-up queued.")
@@ -254,7 +263,11 @@ async def handle_attachment(
         )
         queue_message = f"Task #{task_id} attachment follow-up queued."
 
-    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_id)
+    turn_number = store.get_turn_number(turn_id)
+    if turn_number is None:
+        await update.message.reply_text(f"Task #{task_id} could not create turn.")
+        return
+    turn_dir = turn_directory(settings.tasks_dir, task_id, turn_number)
     prepare_task_directory(turn_dir, prompt)
     store.set_turn_dir(turn_id, turn_dir)
     destination = available_input_path(

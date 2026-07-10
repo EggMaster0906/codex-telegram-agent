@@ -79,17 +79,19 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             )
             worker = Worker(settings, store, FakeBot())
             calls = 0
+            output_paths: list[Path] = []
             second_completed = asyncio.Event()
 
             async def fake_run_codex(**kwargs: object) -> CodexResult:
                 nonlocal calls
                 calls += 1
+                output_path = kwargs["output_path"]
+                assert isinstance(output_path, Path)
+                output_paths.append(output_path)
                 if calls == 1:
                     raise RuntimeError("broken output stream")
 
-                output_path = kwargs["output_path"]
                 artifact_dir = kwargs["artifact_dir"]
-                assert isinstance(output_path, Path)
                 assert isinstance(artifact_dir, Path)
                 output_path.write_text("done", encoding="utf-8")
                 (artifact_dir / ".delivery.json").write_text(
@@ -109,6 +111,16 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(store.get_task(first_task_id, 123).status, "failed")
             self.assertEqual(store.get_task(second_task_id, 123).status, "done")
+            self.assertEqual(
+                [
+                    path.relative_to(root / "tasks").as_posix()
+                    for path in output_paths
+                ],
+                [
+                    "task-000001/turn-000001/final.md",
+                    "task-000002/turn-000001/final.md",
+                ],
+            )
 
     async def test_followup_turn_resumes_saved_codex_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -135,12 +147,14 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             bot = FakeBot()
             worker = Worker(settings, store, bot)
             second_turn_id = store.create_turn(task_id, "second prompt")
+            output_paths: list[Path] = []
 
             async def fake_run_codex(**kwargs: object) -> CodexResult:
                 output_path = kwargs["output_path"]
                 artifact_dir = kwargs["artifact_dir"]
                 assert isinstance(output_path, Path)
                 assert isinstance(artifact_dir, Path)
+                output_paths.append(output_path)
                 output_path.write_text("done", encoding="utf-8")
                 (artifact_dir / ".delivery.json").write_text(
                     json.dumps({"delivery": "text", "attachments": []}),
@@ -176,6 +190,16 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 bot.parse_modes,
                 [None, "Markdown", "Markdown"],
+            )
+            self.assertEqual(
+                [
+                    path.relative_to(root / "tasks").as_posix()
+                    for path in output_paths
+                ],
+                [
+                    "task-000001/turn-000001/final.md",
+                    "task-000001/turn-000002/final.md",
+                ],
             )
 
     async def test_failed_first_turn_keeps_session_for_queued_followup(self) -> None:
