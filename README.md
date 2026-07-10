@@ -191,14 +191,17 @@ Telegram 的 Bot 指令選單。
 新的 Turn。
 
 `/run <task prompt>` 保留為相容指令，會建立獨立的舊式 Task；新流程建議使用
-`/new`。
+`/new`。若目前 `/model` 選到 Gemini 模型，`/run` 會改由 Antigravity CLI
+執行單輪任務；此階段尚未支援 Gemini 的 `/new` 多輪對話。
 
 `/status` 會顯示目前 chat 最近五筆 Task 的執行狀態、session 狀態與初始
 prompt 摘要。
 
 `/model` 會顯示目前模型與伺服器允許的模型白名單，並提供按鈕切換。
-也可使用 `/model <model_id>` 直接切換。模型偏好以 Telegram chat 為範圍
-保存，Bot 重啟後仍會保留，並從下一個新建 Turn 開始生效。
+清單可包含 Codex 與 Gemini 模型；Gemini 模型會以 `gemini:<model_id>`
+保存在偏好中並由 Antigravity CLI 執行。也可使用 `/model <model_id>` 直接
+切換，若 Gemini 模型名稱含空白，可直接輸入完整名稱或使用按鈕。模型偏好以
+Telegram chat 為範圍保存，Bot 重啟後仍會保留，並從下一個新建 Turn 開始生效。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 使用，並列出該 Task
 最新一輪的 artifacts，不包含作為文字回覆來源的 `final.md`。使用者可用
@@ -234,6 +237,9 @@ CODEX_BIN=/home/ai-agent/.local/bin/codex
 CODEX_SANDBOX_MODE=danger-full-access
 CODEX_MODELS=gpt-5.5,gpt-5.4,gpt-5.4-mini
 CODEX_DEFAULT_MODEL=gpt-5.5
+ANTIGRAVITY_BIN=/home/ai-agent/.local/bin/agy
+ANTIGRAVITY_SANDBOX_MODE=workspace-write
+ANTIGRAVITY_MODELS=Gemini 3.5 Flash (Medium),Gemini 3.5 Flash (High),Gemini 3.5 Flash (Low),Gemini 3.1 Pro (Low),Gemini 3.1 Pro (High)
 TASK_TIMEOUT_SECONDS=5400
 DATABASE_PATH=/home/ai-agent/codex-telegram-agent/data/tasks.sqlite3
 TASKS_DIR=/home/ai-agent/codex-telegram-agent/tasks

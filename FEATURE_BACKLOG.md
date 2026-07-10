@@ -18,7 +18,7 @@
 - [x] Artifact metadata 與互動式 `/file` 產物選擇
 - [x] `/model` 模型切換
 - [ ] Claude Code CLI 執行器與 Agent 切換
-- [ ] Antigravity CLI 執行器整合評估
+- [ ] Antigravity CLI 執行器整合（部分完成：Gemini `/run` 單輪）
 - [ ] 多 workspace 管理
 - [ ] systemd 常駐服務
 
@@ -443,9 +443,27 @@ Claude sandbox。若任務確實需要任意 shell command，應先完成容器�
 - timeout、max turns、預算上限、權限拒絕與 CLI 異常均有清楚錯誤訊息。
 - 既有 Codex Task 與 database migration 後的 session resume 不受影響。
 
-## 7. Antigravity CLI 執行器整合（評估中）
+## 7. Antigravity CLI 執行器整合（部分完成）
 
 評估日期：2026-07-11（臺北時間）
+部分實作日期：2026-07-11（臺北時間）
+
+### 目前已完成的最小可測範圍
+
+- `/model` 可列出 Codex 與 Gemini 模型，Gemini 模型以 `gemini:<model>`
+  保存在既有 `model` 欄位。
+- `/model <model_id>` 支援直接輸入完整 Gemini 模型名稱；若名稱含空白，
+  可直接輸入完整名稱或使用 Inline Keyboard。
+- `/run <prompt>` 在選到 Gemini 模型時會呼叫 Antigravity CLI `agy --print`
+  單輪執行，並將 stdout 寫入既有 `final.md`、stdout/stderr 寫入 task log。
+- Gemini 模型目前不支援 `/new` 多輪對話、普通文字 follow-up 或附件流程；
+  bot 與 worker 都會阻擋這些路徑並提示改用 `/run` 或切回 Codex 模型。
+
+### 尚未完成
+
+- Antigravity conversation resume / session ID 擷取與 `/new` 多輪對話。
+- Provider-neutral DB schema，例如 `agent_provider`、`agent_session_id`。
+- 更完整的 Antigravity final output 格式解析與 usage/cost metadata。
 
 ### 背景
 

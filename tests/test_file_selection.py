@@ -22,6 +22,7 @@ except ModuleNotFoundError:
     telegram_module.InlineKeyboardMarkup = InlineKeyboardMarkup
     telegram_constants_module = types.ModuleType("telegram.constants")
     telegram_constants_module.ParseMode = types.SimpleNamespace(
+        HTML="HTML",
         MARKDOWN="Markdown"
     )
     telegram_error_module = types.ModuleType("telegram.error")

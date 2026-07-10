@@ -8,6 +8,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 
 from app.attachments import input_directory
+from app.antigravity_runner import run_antigravity
 from app.artifacts import (
     FINAL_OUTPUT_NAME,
     TASK_LOG_NAME,
@@ -20,6 +21,12 @@ from app.artifacts import (
 from app.codex_runner import run_codex
 from app.config import Settings
 from app.db import Task, TaskStore, TaskTurn
+from app.models import (
+    CODEX_PROVIDER,
+    GEMINI_PROVIDER,
+    model_provider,
+    provider_model_id,
+)
 from app.telegram_delivery import send_markdown_text
 
 
@@ -105,6 +112,18 @@ class Worker:
         if task is None:
             return
 
+        if model_provider(turn.model) != CODEX_PROVIDER:
+            message = (
+                "Gemini model currently supports only legacy /run "
+                "single-turn tasks."
+            )
+            self.store.mark_turn_failed(turn.id, task.id, message)
+            await self.send_message_safely(
+                task.chat_id,
+                f"Task #{task.id} could not continue.\n{message}",
+            )
+            return
+
         first_turn = self.store.is_first_turn(task.id, turn.id)
         if not first_turn and not task.codex_session_id:
             message = "Codex session is unavailable because its first turn did not start."
@@ -148,7 +167,7 @@ class Worker:
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
             session_id=task.codex_session_id,
-            model=turn.model,
+            model=provider_model_id(turn.model),
         )
 
         if result.session_id:
@@ -207,6 +226,56 @@ class Worker:
             f"Task #{task.id} started.",
         )
 
+        provider = model_provider(task.model)
+        if provider == GEMINI_PROVIDER:
+            result = await run_antigravity(
+                antigravity_bin=self.settings.antigravity_bin,
+                sandbox_mode=self.settings.antigravity_sandbox_mode,
+                prompt=task.prompt,
+                workspace_path=Path(task.workspace_path),
+                artifact_dir=artifact_dir,
+                input_dir=input_directory(task_dir),
+                log_path=log_path,
+                output_path=output_path,
+                timeout_seconds=self.settings.task_timeout_seconds,
+                model=provider_model_id(task.model),
+            )
+            if result.exit_code == 0:
+                self.store.mark_done(task.id)
+                final_text = (
+                    output_path.read_text(encoding="utf-8", errors="replace")
+                    if output_path.exists()
+                    else "(empty output)"
+                )
+                header = f"Task #{task.id} done.\n\n"
+                await self.send_markdown_safely(
+                    task.chat_id,
+                    header + final_text,
+                )
+                completed_task = Task(
+                    **{
+                        **task.__dict__,
+                        "status": "done",
+                        "task_dir": str(task_dir),
+                        "log_path": str(log_path),
+                        "output_path": str(output_path),
+                    }
+                )
+                sync_artifact_metadata(self.store, completed_task)
+                await self.send_artifacts(completed_task)
+                return
+
+            message = (
+                f"Antigravity exited with code {result.exit_code}. "
+                f"See log: {log_path}"
+            )
+            self.store.mark_failed(task.id, message)
+            await self.send_message_safely(
+                task.chat_id,
+                f"Task #{task.id} failed.\n{message}",
+            )
+            return
+
         result = await run_codex(
             codex_bin=self.settings.codex_bin,
             sandbox_mode=self.settings.codex_sandbox_mode,
@@ -217,7 +286,7 @@ class Worker:
             log_path=log_path,
             output_path=output_path,
             timeout_seconds=self.settings.task_timeout_seconds,
-            model=task.model,
+            model=provider_model_id(task.model),
         )
 
         if result.exit_code == 0:
