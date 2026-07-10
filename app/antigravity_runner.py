@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,11 +11,45 @@ from typing import BinaryIO
 
 
 OUTPUT_CHUNK_SIZE = 64 * 1024
+LEADING_STATUS_LINE = re.compile(
+    r"^(?:"
+    r"I will|I'll|I\u2019ll|I am going to|I'm going to|I need to|Let me"
+    r")\s+"
+    r"(?:"
+    r"search|perform|write|look|check|inspect|read|run|create|prepare|"
+    r"analy[sz]e|summari[sz]e|collect|use|open|find|verify|gather|"
+    r"draft|make|generate|save|send"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
 class AntigravityResult:
     exit_code: int
+
+
+def strip_leading_status_lines(text: str) -> str:
+    lines = text.splitlines()
+    index = 0
+    stripped_count = 0
+
+    while index < len(lines):
+        line = lines[index].strip()
+        if not line:
+            index += 1
+            continue
+        if not LEADING_STATUS_LINE.match(line):
+            break
+        stripped_count += 1
+        index += 1
+
+    if not stripped_count or index >= len(lines):
+        return text.strip()
+
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return "\n".join(lines[index:]).strip()
 
 
 async def terminate_process_group(
@@ -98,6 +133,8 @@ async def run_antigravity(
         '- For file delivery, use: {"delivery":"files","attachments":["relative/path.ext"]}\n'
         "- The delivery manifest is internal metadata. Do not mention it in the final "
         "response and do not list absolute server paths.\n"
+        "- Do not include process notes, search plans, tool-use announcements, or "
+        "delivery manifest details in the final response.\n"
     )
 
     command = build_antigravity_command(
@@ -177,7 +214,9 @@ async def run_antigravity(
             )
             raise
 
-    output_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
+    output_text = strip_leading_status_lines(
+        b"".join(stdout_chunks).decode("utf-8", errors="replace")
+    )
     output_path.write_text(output_text.strip() + "\n", encoding="utf-8")
     if not delivery_manifest_path.exists():
         delivery_manifest_path.write_text(
