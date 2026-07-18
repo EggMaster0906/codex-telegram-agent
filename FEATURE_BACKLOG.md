@@ -447,17 +447,20 @@ Claude sandbox。若任務確實需要任意 shell command，應先完成容器�
 
 評估日期：2026-07-11（臺北時間）
 部分實作日期：2026-07-11（臺北時間）
+Claude 模型擴充日期：2026-07-18（臺北時間）
 
 ### 目前已完成的最小可測範圍
 
-- `/model` 可列出 Codex 與 Gemini 模型，Gemini 模型以 `gemini:<model>`
-  保存在既有 `model` 欄位。
-- `/model <model_id>` 支援直接輸入完整 Gemini 模型名稱；若名稱含空白，
+- `/model` 可列出 Codex 與 Antigravity 的 Gemini、Claude 模型；Antigravity
+  模型以 `agy:<model>` 保存在既有 `model` 欄位，舊 `gemini:<model>` 偏好
+  會相容解析為 `agy:`。
+- `/model <model_id>` 支援直接輸入完整 Antigravity 模型名稱；若名稱含空白，
   可直接輸入完整名稱或使用 Inline Keyboard。
-- `/run <prompt>` 在選到 Gemini 模型時會呼叫 Antigravity CLI `agy --print`
+- `/run <prompt>` 在選到 Antigravity 模型時會呼叫 Antigravity CLI `agy --print`
   單輪執行，並將 stdout 寫入既有 `final.md`、stdout/stderr 寫入 task log。
-- Gemini 模型目前不支援 `/new` 多輪對話、普通文字 follow-up 或附件流程；
+- Antigravity 模型目前不支援 `/new` 多輪對話、普通文字 follow-up 或附件流程；
   bot 與 worker 都會阻擋這些路徑並提示改用 `/run` 或切回 Codex 模型。
+- Claude Sonnet 4.6 與 Claude Opus 4.6 目前需要 Google AI Ultra 方案。
 
 ### 尚未完成
 

@@ -8,7 +8,8 @@ if TYPE_CHECKING:
 
 MODEL_CALLBACK_PREFIX = "model:"
 CODEX_PROVIDER = "codex"
-GEMINI_PROVIDER = "gemini"
+AGY_PROVIDER = "agy"
+LEGACY_GEMINI_PROVIDER = "gemini"
 MODEL_PROVIDER_SEPARATOR = ":"
 CODEX_MODEL_ALIASES = {
     "gpt-5.6": "gpt-5.6-sol",
@@ -24,23 +25,33 @@ def parse_model_list(raw: str) -> tuple[str, ...]:
     return tuple(models)
 
 
-def qualify_gemini_models(models: tuple[str, ...]) -> tuple[str, ...]:
+def qualify_agy_models(models: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
-        f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{model}"
+        f"{AGY_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{model}"
         for model in models
     )
 
 
 def model_provider(model: str | None) -> str:
-    if model and model.startswith(f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
-        return GEMINI_PROVIDER
+    if model and model.startswith(
+        (
+            f"{AGY_PROVIDER}{MODEL_PROVIDER_SEPARATOR}",
+            f"{LEGACY_GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}",
+        )
+    ):
+        return AGY_PROVIDER
     return CODEX_PROVIDER
 
 
 def provider_model_id(model: str | None) -> str | None:
     if model is None:
         return None
-    if model.startswith(f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
+    if model.startswith(
+        (
+            f"{AGY_PROVIDER}{MODEL_PROVIDER_SEPARATOR}",
+            f"{LEGACY_GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}",
+        )
+    ):
         return model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
     if model.startswith(f"{CODEX_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
         model = model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
@@ -65,23 +76,49 @@ def resolve_model_argument(
     available_models: tuple[str, ...],
 ) -> str | None:
     requested_model = requested_model.strip()
-    codex_requested = requested_model.startswith(
-        f"{CODEX_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"
-    )
-    if codex_requested:
-        requested_model = requested_model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
+    requested_provider: str | None = None
+    for provider in (
+        CODEX_PROVIDER,
+        AGY_PROVIDER,
+        LEGACY_GEMINI_PROVIDER,
+    ):
+        prefix = f"{provider}{MODEL_PROVIDER_SEPARATOR}"
+        if requested_model.startswith(prefix):
+            requested_provider = provider
+            requested_model = requested_model.removeprefix(prefix)
+            break
+
+    if requested_provider in (AGY_PROVIDER, LEGACY_GEMINI_PROVIDER):
+        agy_model = (
+            f"{AGY_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{requested_model}"
+        )
+        if agy_model in available_models:
+            return agy_model
+        legacy_model = (
+            f"{LEGACY_GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"
+            f"{requested_model}"
+        )
+        if legacy_model in available_models:
+            return legacy_model
+        return None
 
     canonical_model = CODEX_MODEL_ALIASES.get(requested_model, requested_model)
     if canonical_model in available_models:
         return canonical_model
     if requested_model in available_models:
         return requested_model
-    if codex_requested:
+    if requested_provider == CODEX_PROVIDER:
         return None
 
-    gemini_model = f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{requested_model}"
-    if gemini_model in available_models:
-        return gemini_model
+    agy_model = f"{AGY_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{requested_model}"
+    if agy_model in available_models:
+        return agy_model
+
+    legacy_model = (
+        f"{LEGACY_GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{requested_model}"
+    )
+    if legacy_model in available_models:
+        return legacy_model
 
     return None
 

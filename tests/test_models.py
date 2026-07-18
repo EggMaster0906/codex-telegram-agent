@@ -34,13 +34,14 @@ except ModuleNotFoundError:
     sys.modules["telegram.error"] = telegram_error_module
 
 from app.models import (
+    AGY_PROVIDER,
     build_model_keyboard,
     model_label,
     model_provider,
     model_message,
     parse_model_list,
     provider_model_id,
-    qualify_gemini_models,
+    qualify_agy_models,
     resolve_model_argument,
     resolve_model_callback,
 )
@@ -94,7 +95,7 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(
             resolve_model_argument(
                 "codex:Gemini 3.5 Flash (Low)",
-                models + ("gemini:Gemini 3.5 Flash (Low)",),
+                models + ("agy:Gemini 3.5 Flash (Low)",),
             )
         )
 
@@ -104,30 +105,61 @@ class ModelTests(unittest.TestCase):
     def test_message_explains_missing_whitelist(self) -> None:
         self.assertIn("CODEX_MODELS", model_message((), None))
 
-    def test_gemini_models_are_qualified_and_displayed(self) -> None:
-        models = ("gpt-a",) + qualify_gemini_models(("Gemini 3.5 Flash (Low)",))
+    def test_antigravity_models_are_qualified_and_displayed(self) -> None:
+        models = ("gpt-a",) + qualify_agy_models(
+            (
+                "Gemini 3.5 Flash (Low)",
+                "Claude Sonnet 4.6 (Thinking)",
+            )
+        )
 
         self.assertEqual(
             models,
-            ("gpt-a", "gemini:Gemini 3.5 Flash (Low)"),
+            (
+                "gpt-a",
+                "agy:Gemini 3.5 Flash (Low)",
+                "agy:Claude Sonnet 4.6 (Thinking)",
+            ),
         )
         self.assertEqual(
-            model_label("gemini:Gemini 3.5 Flash (Low)"),
-            "Gemini 3.5 Flash (Low)",
+            model_label("agy:Claude Sonnet 4.6 (Thinking)"),
+            "Claude Sonnet 4.6 (Thinking)",
         )
         self.assertEqual(
-            model_provider("gemini:Gemini 3.5 Flash (Low)"),
-            "gemini",
+            model_provider("agy:Claude Sonnet 4.6 (Thinking)"),
+            AGY_PROVIDER,
         )
         self.assertEqual(
-            provider_model_id("gemini:Gemini 3.5 Flash (Low)"),
-            "Gemini 3.5 Flash (Low)",
+            provider_model_id("agy:Claude Sonnet 4.6 (Thinking)"),
+            "Claude Sonnet 4.6 (Thinking)",
         )
         self.assertEqual(
-            resolve_model_argument("Gemini 3.5 Flash (Low)", models),
-            "gemini:Gemini 3.5 Flash (Low)",
+            resolve_model_argument("Claude Sonnet 4.6 (Thinking)", models),
+            "agy:Claude Sonnet 4.6 (Thinking)",
+        )
+        self.assertEqual(
+            resolve_model_argument(
+                "agy:Claude Sonnet 4.6 (Thinking)",
+                models,
+            ),
+            "agy:Claude Sonnet 4.6 (Thinking)",
         )
         self.assertEqual(resolve_model_argument("codex:gpt-a", models), "gpt-a")
+
+    def test_legacy_gemini_selection_resolves_to_agy_model(self) -> None:
+        models = qualify_agy_models(("Gemini 3.5 Flash (Low)",))
+
+        self.assertEqual(
+            model_provider("gemini:Gemini 3.5 Flash (Low)"),
+            AGY_PROVIDER,
+        )
+        self.assertEqual(
+            resolve_model_argument(
+                "gemini:Gemini 3.5 Flash (Low)",
+                models,
+            ),
+            "agy:Gemini 3.5 Flash (Low)",
+        )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ COMMAND_HELP = (
     ("end", "/end", "結束目前的 Codex session"),
     ("run", "/run <task prompt>", "建立獨立的舊式 Codex 任務"),
     ("status", "/status", "顯示最近五筆任務與狀態"),
+    ("usage", "/usage", "顯示 Codex 與 Antigravity 剩餘用量"),
     ("model", "/model [model_id]", "查看或切換後續 Turn 使用的模型"),
     ("file", "/file <task_id> [artifact_id]", "選擇並下載任務產物"),
     ("result", "/result <task_id>", "查看任務的文字結果"),

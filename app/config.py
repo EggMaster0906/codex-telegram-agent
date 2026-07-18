@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.models import parse_model_list, qualify_gemini_models
+from app.models import parse_model_list, qualify_agy_models
 
 
 DEFAULT_ANTIGRAVITY_MODELS = (
@@ -15,6 +15,8 @@ DEFAULT_ANTIGRAVITY_MODELS = (
     "Gemini 3.5 Flash (Low)",
     "Gemini 3.1 Pro (Low)",
     "Gemini 3.1 Pro (High)",
+    "Claude Sonnet 4.6 (Thinking)",
+    "Claude Opus 4.6 (Thinking)",
 )
 
 
@@ -57,7 +59,7 @@ def load_settings() -> Settings:
             ",".join(DEFAULT_ANTIGRAVITY_MODELS),
         )
     )
-    available_models = codex_models + qualify_gemini_models(antigravity_models)
+    available_models = codex_models + qualify_agy_models(antigravity_models)
     configured_default = os.getenv("CODEX_DEFAULT_MODEL", "").strip() or None
     if configured_default and configured_default not in codex_models:
         raise RuntimeError(

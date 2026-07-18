@@ -167,6 +167,7 @@ tasks/
 /end
 /run <task prompt>
 /status
+/usage
 /model [model_id]
 /file <task_id> [artifact_id]
 /result <task_id>
@@ -191,18 +192,26 @@ Telegram 的 Bot 指令選單。
 新的 Turn。
 
 `/run <task prompt>` 保留為相容指令，會建立獨立的舊式 Task；新流程建議使用
-`/new`。若目前 `/model` 選到 Gemini 模型，`/run` 會改由 Antigravity CLI
-執行單輪任務；此階段尚未支援 Gemini 的 `/new` 多輪對話。
+`/new`。若目前 `/model` 選到 Antigravity 模型，`/run` 會改由 Antigravity
+CLI 執行單輪任務；此階段尚未支援 Antigravity 的 `/new` 多輪對話。
 
 `/status` 會顯示目前 chat 最近五筆 Task 的執行狀態、session 狀態與初始
 prompt 摘要。
 
+`/usage` 會即時查詢並顯示 Codex 與 Antigravity 的剩餘用量。Codex 透過
+App Server 的 rate limits 介面取得資料；Antigravity 透過 CLI 內建的
+`/usage` 頁面取得 Gemini、Claude 與 GPT 模型群組的每週及五小時額度。
+若其中一個服務查詢失敗，仍會顯示另一個服務的結果與個別錯誤原因。
+
 `/model` 會顯示目前模型與伺服器允許的模型白名單，並提供按鈕切換。
 為相容既有設定，輸入 `/model gpt-5.6` 會解析為 `gpt-5.6-sol`。
-清單可包含 Codex 與 Gemini 模型；Gemini 模型會以 `gemini:<model_id>`
-保存在偏好中並由 Antigravity CLI 執行。也可使用 `/model <model_id>` 直接
-切換，若 Gemini 模型名稱含空白，可直接輸入完整名稱或使用按鈕。模型偏好以
-Telegram chat 為範圍保存，Bot 重啟後仍會保留，並從下一個新建 Turn 開始生效。
+清單可包含 Codex 與 Antigravity 的 Gemini、Claude 模型；Antigravity 模型
+會以 `agy:<model_id>` 保存在偏好中並由 `agy` 執行。既有資料庫中的
+`gemini:<model_id>` 偏好會自動解析為對應的 `agy:` 模型。也可使用
+`/model <model_id>` 直接切換；模型名稱含空白時，可直接輸入完整名稱或使用
+按鈕。模型偏好以 Telegram chat 為範圍保存，Bot 重啟後仍會保留，並從下一個
+新建 Turn 開始生效。Claude 模型目前需要 Google AI Ultra 方案，且仍受帳號
+配額與服務容量限制。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 使用，並列出該 Task
 最新一輪的 artifacts，不包含作為文字回覆來源的 `final.md`。使用者可用
@@ -240,7 +249,7 @@ CODEX_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4,gpt-5.4-mini
 CODEX_DEFAULT_MODEL=gpt-5.6-sol
 ANTIGRAVITY_BIN=/home/ai-agent/.local/bin/agy
 ANTIGRAVITY_SANDBOX_MODE=workspace-write
-ANTIGRAVITY_MODELS=Gemini 3.5 Flash (Medium),Gemini 3.5 Flash (High),Gemini 3.5 Flash (Low),Gemini 3.1 Pro (Low),Gemini 3.1 Pro (High)
+ANTIGRAVITY_MODELS=Gemini 3.5 Flash (Medium),Gemini 3.5 Flash (High),Gemini 3.5 Flash (Low),Gemini 3.1 Pro (Low),Gemini 3.1 Pro (High),Claude Sonnet 4.6 (Thinking),Claude Opus 4.6 (Thinking)
 TASK_TIMEOUT_SECONDS=5400
 DATABASE_PATH=/home/ai-agent/codex-telegram-agent/data/tasks.sqlite3
 TASKS_DIR=/home/ai-agent/codex-telegram-agent/tasks

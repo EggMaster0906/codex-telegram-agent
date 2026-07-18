@@ -60,6 +60,11 @@ from app.telegram_utils import (
     is_authorized,
     split_telegram_message,
 )
+from app.usage import (
+    build_usage_message,
+    query_antigravity_usage,
+    query_codex_usage,
+)
 from app.worker import Worker
 
 
@@ -71,8 +76,13 @@ store.reconcile_turn_directories(settings.tasks_dir)
 
 def selected_model_for_chat(chat_id: int) -> str | None:
     selected_model = store.get_selected_model(chat_id, settings.default_model)
-    if selected_model in settings.available_models:
-        return selected_model
+    if selected_model is not None:
+        resolved_model = resolve_model_argument(
+            selected_model,
+            settings.available_models,
+        )
+        if resolved_model is not None:
+            return resolved_model
     return settings.default_model
 
 
@@ -338,6 +348,19 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for task in tasks
     ]
     await update.message.reply_text("\n".join(lines))
+
+
+async def usage(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await require_auth(update):
+        return
+
+    codex_report, antigravity_report = await asyncio.gather(
+        query_codex_usage(settings.codex_bin),
+        query_antigravity_usage(settings.antigravity_bin),
+    )
+    await update.message.reply_text(
+        build_usage_message(codex_report, antigravity_report)
+    )
 
 
 async def file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -711,6 +734,7 @@ def main() -> None:
     application.add_handler(CommandHandler("end", end_session))
     application.add_handler(CommandHandler("run", run))
     application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("usage", usage))
     application.add_handler(CommandHandler("file", file))
     application.add_handler(CommandHandler("result", result))
     application.add_handler(CommandHandler("log", log))

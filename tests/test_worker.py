@@ -314,7 +314,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 "gpt-test",
             )
 
-    async def test_legacy_run_dispatches_gemini_model_to_antigravity(self) -> None:
+    async def test_legacy_run_dispatches_agy_model_to_antigravity(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             store = TaskStore(root / "tasks.sqlite3")
@@ -323,7 +323,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 123,
                 "single prompt",
                 root,
-                model="gemini:Gemini 3.5 Flash (Low)",
+                model="agy:Claude Sonnet 4.6 (Thinking)",
             )
             settings = Settings(
                 telegram_bot_token="test",
@@ -346,7 +346,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 artifact_dir = kwargs["artifact_dir"]
                 assert isinstance(output_path, Path)
                 assert isinstance(artifact_dir, Path)
-                output_path.write_text("gemini done", encoding="utf-8")
+                output_path.write_text("claude done", encoding="utf-8")
                 (artifact_dir / ".delivery.json").write_text(
                     json.dumps({"delivery": "text", "attachments": []}),
                     encoding="utf-8",
@@ -364,11 +364,11 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             mocked_codex.assert_not_awaited()
             self.assertEqual(
                 mocked_agy.await_args.kwargs["model"],
-                "Gemini 3.5 Flash (Low)",
+                "Claude Sonnet 4.6 (Thinking)",
             )
             self.assertEqual(store.get_task(task_id, 123).status, "done")
 
-    async def test_gemini_turn_is_rejected_until_multiturn_is_supported(self) -> None:
+    async def test_agy_turn_is_rejected_until_multiturn_is_supported(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             store = TaskStore(root / "tasks.sqlite3")
@@ -377,7 +377,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 123,
                 "first prompt",
                 root,
-                model="gemini:Gemini 3.5 Flash (Low)",
+                model="agy:Claude Sonnet 4.6 (Thinking)",
             )
             settings = Settings(
                 telegram_bot_token="test",

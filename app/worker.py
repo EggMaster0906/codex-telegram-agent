@@ -22,8 +22,8 @@ from app.codex_runner import run_codex
 from app.config import Settings
 from app.db import Task, TaskStore, TaskTurn
 from app.models import (
+    AGY_PROVIDER,
     CODEX_PROVIDER,
-    GEMINI_PROVIDER,
     model_provider,
     provider_model_id,
 )
@@ -114,7 +114,7 @@ class Worker:
 
         if model_provider(turn.model) != CODEX_PROVIDER:
             message = (
-                "Gemini model currently supports only legacy /run "
+                "Antigravity model currently supports only legacy /run "
                 "single-turn tasks."
             )
             self.store.mark_turn_failed(turn.id, task.id, message)
@@ -227,7 +227,7 @@ class Worker:
         )
 
         provider = model_provider(task.model)
-        if provider == GEMINI_PROVIDER:
+        if provider == AGY_PROVIDER:
             result = await run_antigravity(
                 antigravity_bin=self.settings.antigravity_bin,
                 sandbox_mode=self.settings.antigravity_sandbox_mode,
