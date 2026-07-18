@@ -6,8 +6,9 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from app.telegram_utils import (
-    prepare_telegram_markdown,
+    prepare_telegram_html,
     split_telegram_message,
+    strip_telegram_html,
 )
 
 
@@ -26,14 +27,14 @@ async def send_markdown_text(
     chat_id: int,
     text: str,
 ) -> None:
-    markdown = prepare_telegram_markdown(text)
-    for chunk in split_telegram_message(markdown):
+    formatted_text = prepare_telegram_html(text)
+    for chunk in split_telegram_message(formatted_text):
         try:
             await bot.send_message(
                 chat_id,
                 chunk,
-                parse_mode=ParseMode.MARKDOWN,
+                parse_mode=ParseMode.HTML,
             )
         except BadRequest:
-            # A malformed or split Markdown entity must not hide the result.
-            await bot.send_message(chat_id, chunk)
+            # A malformed or split entity must not hide the result.
+            await bot.send_message(chat_id, strip_telegram_html(chunk))

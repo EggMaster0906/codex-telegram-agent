@@ -23,6 +23,7 @@ except ModuleNotFoundError:
     telegram_module.Bot = object
     telegram_constants_module = types.ModuleType("telegram.constants")
     telegram_constants_module.ParseMode = types.SimpleNamespace(
+        HTML="HTML",
         MARKDOWN="Markdown"
     )
     telegram_error_module = types.ModuleType("telegram.error")
@@ -32,6 +33,7 @@ except ModuleNotFoundError:
     sys.modules["telegram.constants"] = telegram_constants_module
     sys.modules["telegram.error"] = telegram_error_module
 
+from app.antigravity_runner import AntigravityResult
 from app.codex_runner import CodexResult
 from app.config import Settings
 from app.db import TaskStore
@@ -189,7 +191,17 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 bot.parse_modes,
-                [None, "Markdown", "Markdown"],
+                [None, "HTML", "HTML"],
+            )
+            self.assertEqual(
+                [
+                    path.relative_to(root / "tasks").as_posix()
+                    for path in output_paths
+                ],
+                [
+                    "task-000001/turn-000001/final.md",
+                    "task-000001/turn-000002/final.md",
+                ],
             )
             self.assertEqual(
                 [
@@ -301,6 +313,99 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 mocked_runner.await_args.kwargs["model"],
                 "gpt-test",
             )
+
+    async def test_legacy_run_dispatches_gemini_model_to_antigravity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            task_id = store.create_task(
+                123,
+                "single prompt",
+                root,
+                model="gemini:Gemini 3.5 Flash (Low)",
+            )
+            settings = Settings(
+                telegram_bot_token="test",
+                allowed_chat_ids={123},
+                default_workspace=root,
+                codex_bin="codex",
+                codex_sandbox_mode="workspace-write",
+                task_timeout_seconds=60,
+                database_path=root / "tasks.sqlite3",
+                tasks_dir=root / "tasks",
+                worker_poll_seconds=0.01,
+                session_timeout_seconds=86400,
+                antigravity_bin="agy",
+                antigravity_sandbox_mode="workspace-write",
+            )
+            worker = Worker(settings, store, FakeBot())
+
+            async def fake_run_antigravity(**kwargs: object) -> AntigravityResult:
+                output_path = kwargs["output_path"]
+                artifact_dir = kwargs["artifact_dir"]
+                assert isinstance(output_path, Path)
+                assert isinstance(artifact_dir, Path)
+                output_path.write_text("gemini done", encoding="utf-8")
+                (artifact_dir / ".delivery.json").write_text(
+                    json.dumps({"delivery": "text", "attachments": []}),
+                    encoding="utf-8",
+                )
+                return AntigravityResult(0)
+
+            mocked_codex = AsyncMock()
+            mocked_agy = AsyncMock(side_effect=fake_run_antigravity)
+            with patch("app.worker.run_codex", mocked_codex), patch(
+                "app.worker.run_antigravity",
+                mocked_agy,
+            ):
+                await worker.run_legacy_task(store.get_task(task_id, 123))
+
+            mocked_codex.assert_not_awaited()
+            self.assertEqual(
+                mocked_agy.await_args.kwargs["model"],
+                "Gemini 3.5 Flash (Low)",
+            )
+            self.assertEqual(store.get_task(task_id, 123).status, "done")
+
+    async def test_gemini_turn_is_rejected_until_multiturn_is_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            store.create_session(
+                123,
+                "first prompt",
+                root,
+                model="gemini:Gemini 3.5 Flash (Low)",
+            )
+            settings = Settings(
+                telegram_bot_token="test",
+                allowed_chat_ids={123},
+                default_workspace=root,
+                codex_bin="codex",
+                codex_sandbox_mode="workspace-write",
+                task_timeout_seconds=60,
+                database_path=root / "tasks.sqlite3",
+                tasks_dir=root / "tasks",
+                worker_poll_seconds=0.01,
+                session_timeout_seconds=86400,
+                antigravity_bin="agy",
+                antigravity_sandbox_mode="workspace-write",
+            )
+            bot = FakeBot()
+            worker = Worker(settings, store, bot)
+
+            with patch("app.worker.run_codex", AsyncMock()) as mocked_codex, patch(
+                "app.worker.run_antigravity",
+                AsyncMock(),
+            ) as mocked_agy:
+                await worker.run_turn(store.next_pending_turn())
+
+            mocked_codex.assert_not_awaited()
+            mocked_agy.assert_not_awaited()
+            self.assertEqual(store.get_task(1, 123).status, "failed")
+            self.assertIn("only legacy /run", bot.messages[-1][1])
 
 
 if __name__ == "__main__":

@@ -43,9 +43,13 @@ from app.file_selection import (
     truncate_text,
 )
 from app.models import (
+    CODEX_PROVIDER,
     MODEL_CALLBACK_PREFIX,
     build_model_keyboard,
+    model_label,
     model_message,
+    model_provider,
+    resolve_model_argument,
     resolve_model_callback,
 )
 from app.task_followup import read_final_output, read_log_tail
@@ -70,6 +74,21 @@ def selected_model_for_chat(chat_id: int) -> str | None:
     if selected_model in settings.available_models:
         return selected_model
     return settings.default_model
+
+
+async def reject_non_codex_session_model(
+    update: Update,
+    model: str | None,
+) -> bool:
+    if model_provider(model) == CODEX_PROVIDER:
+        return False
+    if update.message is None:
+        return True
+    await update.message.reply_text(
+        f"目前 {model_label(model)} 僅支援 /run 單輪任務。\n"
+        "多輪對話請先用 /model 切回 Codex 模型。"
+    )
+    return True
 
 
 async def require_auth(update: Update) -> bool:
@@ -125,7 +144,9 @@ async def run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     task_dir = task_directory(settings.tasks_dir, task_id)
     prepare_task_directory(task_dir, prompt)
     store.set_task_dir(task_id, task_dir)
-    await update.message.reply_text(f"Task #{task_id} queued.")
+    await update.message.reply_text(
+        f"Task #{task_id} queued (model: {model_label(selected_model)})."
+    )
 
 
 async def new_session(
@@ -142,6 +163,8 @@ async def new_session(
 
     chat = update.effective_chat
     selected_model = selected_model_for_chat(chat.id)
+    if await reject_non_codex_session_model(update, selected_model):
+        return
     task_id, turn_id = store.create_session(
         chat.id,
         prompt,
@@ -201,6 +224,8 @@ async def handle_message(
         return
 
     selected_model = selected_model_for_chat(chat.id)
+    if await reject_non_codex_session_model(update, selected_model):
+        return
     turn_id = store.create_turn(task.id, prompt, model=selected_model)
     turn_number = store.get_turn_number(turn_id)
     if turn_number is None:
@@ -235,15 +260,18 @@ async def handle_attachment(
         return
 
     chat = update.effective_chat
+    selected_model = selected_model_for_chat(chat.id)
+    if await reject_non_codex_session_model(update, selected_model):
+        return
+
     force_new_session, prompt = parse_attachment_caption(update.message.caption)
     task = None
     if not force_new_session:
         task = store.get_active_task(
             chat.id,
             settings.session_timeout_seconds,
-        )
+    )
     if task is None:
-        selected_model = selected_model_for_chat(chat.id)
         task_id, turn_id = store.create_session(
             chat.id,
             prompt,
@@ -254,7 +282,6 @@ async def handle_attachment(
         queue_message = f"Task #{task_id} attachment queued as a new session."
     else:
         task_id = task.id
-        selected_model = selected_model_for_chat(chat.id)
         turn_id = store.create_turn(
             task_id,
             prompt,
@@ -306,7 +333,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lines = [
         (
             f"#{task.id} {task.status} [{task.session_status}]: "
-            f"{task.prompt[:80]} (model: {task.model or 'Codex default'})"
+            f"{task.prompt[:80]} (model: {model_label(task.model)})"
         )
         for task in tasks
     ]
@@ -594,21 +621,24 @@ async def model_command(
         )
         return
 
-    if len(context.args) != 1:
-        await update.message.reply_text("Usage: /model <model_id>")
-        return
-
-    requested_model = context.args[0]
-    if requested_model not in settings.available_models:
+    requested_model = " ".join(context.args)
+    selected_model = resolve_model_argument(
+        requested_model,
+        settings.available_models,
+    )
+    if selected_model is None:
+        available = ", ".join(
+            model_label(model) for model in settings.available_models
+        )
         await update.message.reply_text(
             f"模型「{requested_model}」不在允許的白名單中。\n"
-            f"可用模型：{', '.join(settings.available_models) or '(未設定)'}"
+            f"可用模型：{available or '(未設定)'}"
         )
         return
 
-    store.set_selected_model(chat.id, requested_model)
+    store.set_selected_model(chat.id, selected_model)
     await update.message.reply_text(
-        f"已切換至 {requested_model}，從下一個新建 Turn 開始生效。"
+        f"已切換至 {model_label(selected_model)}，從下一個新建 Turn 開始生效。"
     )
 
 
@@ -633,7 +663,7 @@ async def model_callback(
         return
 
     store.set_selected_model(chat.id, selected_model)
-    await query.answer(f"已切換至 {selected_model}")
+    await query.answer(f"已切換至 {model_label(selected_model)}")
     await query.edit_message_text(
         model_message(settings.available_models, selected_model),
         reply_markup=build_model_keyboard(

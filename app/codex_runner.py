@@ -162,6 +162,8 @@ async def run_codex(
         "files that should be automatically sent to the user.\n"
         "- The delivery manifest is internal metadata. Do not mention it in the final "
         "response and do not list absolute server paths.\n"
+        "- Do not include process notes, search plans, tool-use announcements, or "
+        "delivery manifest details in the final response.\n"
     )
 
     command = build_codex_command(

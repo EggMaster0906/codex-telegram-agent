@@ -23,6 +23,7 @@ except ModuleNotFoundError:
     telegram_module.InlineKeyboardMarkup = InlineKeyboardMarkup
     telegram_constants_module = types.ModuleType("telegram.constants")
     telegram_constants_module.ParseMode = types.SimpleNamespace(
+        HTML="HTML",
         MARKDOWN="Markdown"
     )
     telegram_error_module = types.ModuleType("telegram.error")
@@ -34,8 +35,13 @@ except ModuleNotFoundError:
 
 from app.models import (
     build_model_keyboard,
+    model_label,
+    model_provider,
     model_message,
     parse_model_list,
+    provider_model_id,
+    qualify_gemini_models,
+    resolve_model_argument,
     resolve_model_callback,
 )
 
@@ -74,6 +80,31 @@ class ModelTests(unittest.TestCase):
 
     def test_message_explains_missing_whitelist(self) -> None:
         self.assertIn("CODEX_MODELS", model_message((), None))
+
+    def test_gemini_models_are_qualified_and_displayed(self) -> None:
+        models = ("gpt-a",) + qualify_gemini_models(("Gemini 3.5 Flash (Low)",))
+
+        self.assertEqual(
+            models,
+            ("gpt-a", "gemini:Gemini 3.5 Flash (Low)"),
+        )
+        self.assertEqual(
+            model_label("gemini:Gemini 3.5 Flash (Low)"),
+            "Gemini 3.5 Flash (Low)",
+        )
+        self.assertEqual(
+            model_provider("gemini:Gemini 3.5 Flash (Low)"),
+            "gemini",
+        )
+        self.assertEqual(
+            provider_model_id("gemini:Gemini 3.5 Flash (Low)"),
+            "Gemini 3.5 Flash (Low)",
+        )
+        self.assertEqual(
+            resolve_model_argument("Gemini 3.5 Flash (Low)", models),
+            "gemini:Gemini 3.5 Flash (Low)",
+        )
+        self.assertEqual(resolve_model_argument("codex:gpt-a", models), "gpt-a")
 
 
 if __name__ == "__main__":
