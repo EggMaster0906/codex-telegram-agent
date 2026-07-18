@@ -10,6 +10,9 @@ MODEL_CALLBACK_PREFIX = "model:"
 CODEX_PROVIDER = "codex"
 GEMINI_PROVIDER = "gemini"
 MODEL_PROVIDER_SEPARATOR = ":"
+CODEX_MODEL_ALIASES = {
+    "gpt-5.6": "gpt-5.6-sol",
+}
 
 
 def parse_model_list(raw: str) -> tuple[str, ...]:
@@ -40,8 +43,8 @@ def provider_model_id(model: str | None) -> str | None:
     if model.startswith(f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
         return model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
     if model.startswith(f"{CODEX_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
-        return model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
-    return model
+        model = model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
+    return CODEX_MODEL_ALIASES.get(model, model)
 
 
 def model_label(model: str | None) -> str:
@@ -50,18 +53,31 @@ def model_label(model: str | None) -> str:
     return provider_model_id(model) or model
 
 
+def _same_model(left: str | None, right: str | None) -> bool:
+    return (
+        model_provider(left) == model_provider(right)
+        and provider_model_id(left) == provider_model_id(right)
+    )
+
+
 def resolve_model_argument(
     requested_model: str,
     available_models: tuple[str, ...],
 ) -> str | None:
     requested_model = requested_model.strip()
+    codex_requested = requested_model.startswith(
+        f"{CODEX_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"
+    )
+    if codex_requested:
+        requested_model = requested_model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
+
+    canonical_model = CODEX_MODEL_ALIASES.get(requested_model, requested_model)
+    if canonical_model in available_models:
+        return canonical_model
     if requested_model in available_models:
         return requested_model
-
-    if requested_model.startswith(f"{CODEX_PROVIDER}{MODEL_PROVIDER_SEPARATOR}"):
-        codex_model = requested_model.split(MODEL_PROVIDER_SEPARATOR, 1)[1]
-        if codex_model in available_models:
-            return codex_model
+    if codex_requested:
+        return None
 
     gemini_model = f"{GEMINI_PROVIDER}{MODEL_PROVIDER_SEPARATOR}{requested_model}"
     if gemini_model in available_models:
@@ -93,7 +109,8 @@ def build_model_keyboard(
 
     buttons = [
         InlineKeyboardButton(
-            text=f"{'✓ ' if model == current_model else ''}{model_label(model)}",
+            text=f"{'✓ ' if _same_model(model, current_model) else ''}"
+            f"{model_label(model)}",
             callback_data=f"{MODEL_CALLBACK_PREFIX}{index}",
         )
         for index, model in enumerate(available_models)

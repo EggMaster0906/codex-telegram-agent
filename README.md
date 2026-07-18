@@ -198,6 +198,7 @@ Telegram 的 Bot 指令選單。
 prompt 摘要。
 
 `/model` 會顯示目前模型與伺服器允許的模型白名單，並提供按鈕切換。
+為相容既有設定，輸入 `/model gpt-5.6` 會解析為 `gpt-5.6-sol`。
 清單可包含 Codex 與 Gemini 模型；Gemini 模型會以 `gemini:<model_id>`
 保存在偏好中並由 Antigravity CLI 執行。也可使用 `/model <model_id>` 直接
 切換，若 Gemini 模型名稱含空白，可直接輸入完整名稱或使用按鈕。模型偏好以
@@ -235,8 +236,8 @@ ALLOWED_CHAT_IDS=123456789
 DEFAULT_WORKSPACE=/home/ai-agent
 CODEX_BIN=/home/ai-agent/.local/bin/codex
 CODEX_SANDBOX_MODE=danger-full-access
-CODEX_MODELS=gpt-5.6,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4,gpt-5.4-mini
-CODEX_DEFAULT_MODEL=gpt-5.6
+CODEX_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna,gpt-5.5,gpt-5.4,gpt-5.4-mini
+CODEX_DEFAULT_MODEL=gpt-5.6-sol
 ANTIGRAVITY_BIN=/home/ai-agent/.local/bin/agy
 ANTIGRAVITY_SANDBOX_MODE=workspace-write
 ANTIGRAVITY_MODELS=Gemini 3.5 Flash (Medium),Gemini 3.5 Flash (High),Gemini 3.5 Flash (Low),Gemini 3.1 Pro (Low),Gemini 3.1 Pro (High)

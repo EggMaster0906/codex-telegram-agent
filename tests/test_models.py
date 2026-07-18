@@ -78,6 +78,29 @@ class ModelTests(unittest.TestCase):
         ])
         self.assertEqual(buttons[1].text, "✓ gpt-b")
 
+    def test_gpt_5_6_alias_resolves_to_sol(self) -> None:
+        models = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+
+        self.assertEqual(provider_model_id("gpt-5.6"), "gpt-5.6-sol")
+        self.assertEqual(provider_model_id("codex:gpt-5.6"), "gpt-5.6-sol")
+        self.assertEqual(
+            resolve_model_argument("gpt-5.6", models),
+            "gpt-5.6-sol",
+        )
+        self.assertEqual(
+            resolve_model_argument("codex:gpt-5.6", models),
+            "gpt-5.6-sol",
+        )
+        self.assertIsNone(
+            resolve_model_argument(
+                "codex:Gemini 3.5 Flash (Low)",
+                models + ("gemini:Gemini 3.5 Flash (Low)",),
+            )
+        )
+
+        keyboard = build_model_keyboard(models, "gpt-5.6")
+        self.assertEqual(keyboard.inline_keyboard[0][0].text, "✓ gpt-5.6-sol")
+
     def test_message_explains_missing_whitelist(self) -> None:
         self.assertIn("CODEX_MODELS", model_message((), None))
 
