@@ -19,6 +19,7 @@ COMMAND_HELP = (
     ("status", "/status", "顯示最近五筆任務與狀態"),
     ("usage", "/usage", "顯示 Codex 與 Antigravity 剩餘用量"),
     ("model", "/model [model_id]", "查看或切換後續 Turn 使用的模型"),
+    ("progress", "/progress [on|off]", "查看或切換即時任務進度"),
     ("file", "/file <task_id> [artifact_id]", "選擇並下載任務產物"),
     ("result", "/result <task_id>", "查看任務的文字結果"),
     ("log", "/log <task_id>", "查看任務最近的執行紀錄"),

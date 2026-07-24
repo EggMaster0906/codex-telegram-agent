@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import io
+import json
 import tempfile
 import time
 import unittest
@@ -7,6 +10,7 @@ from pathlib import Path
 
 from app.codex_runner import (
     build_codex_command,
+    consume_process_output,
     parse_session_id,
     run_codex,
 )
@@ -88,6 +92,47 @@ class CodexRunnerTests(unittest.IsolatedAsyncioTestCase):
             session_id=None,
         )
         self.assertIn(str(input_dir), command)
+
+    async def test_emits_progress_but_holds_back_final_agent_message(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "session-progress"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "Checking files"},
+            },
+            {
+                "type": "item.started",
+                "item": {"type": "command_execution", "command": "git status"},
+            },
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "Running tests"},
+            },
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "Final answer"},
+            },
+            {"type": "turn.completed"},
+        ]
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            b"".join(
+                json.dumps(event).encode("utf-8") + b"\n"
+                for event in events
+            )
+        )
+        reader.feed_eof()
+        progress: list[str] = []
+
+        session_id = await consume_process_output(
+            reader,
+            io.BytesIO(),
+            None,
+            on_progress=progress.append,
+        )
+
+        self.assertEqual(session_id, "session-progress")
+        self.assertEqual(progress, ["Checking files", "Running tests"])
 
     async def test_streams_json_line_larger_than_asyncio_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -52,6 +52,13 @@ from app.models import (
     resolve_model_argument,
     resolve_model_callback,
 )
+from app.progress import (
+    PROGRESS_CALLBACK_PREFIX,
+    build_progress_keyboard,
+    progress_message,
+    resolve_progress_callback,
+    resolve_progress_value,
+)
 from app.task_followup import read_final_output, read_log_tail
 from app.telegram_delivery import send_markdown_text
 from app.telegram_utils import (
@@ -696,6 +703,67 @@ async def model_callback(
     )
 
 
+async def progress_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not await require_auth(update):
+        return
+
+    chat = update.effective_chat
+    enabled = store.get_progress_enabled(chat.id)
+    if context.args:
+        if len(context.args) != 1:
+            await update.message.reply_text("Usage: /progress [on|off]")
+            return
+        requested = resolve_progress_value(context.args[0])
+        if requested is None:
+            await update.message.reply_text("Usage: /progress [on|off]")
+            return
+        enabled = requested
+        store.set_progress_enabled(chat.id, enabled)
+
+    await update.message.reply_text(
+        progress_message(enabled),
+        reply_markup=build_progress_keyboard(enabled),
+    )
+
+
+async def progress_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    chat = update.effective_chat
+    if query is None or chat is None:
+        return
+    if not is_authorized(chat.id, settings.allowed_chat_ids):
+        await query.answer("Unauthorized chat.", show_alert=True)
+        return
+
+    enabled = resolve_progress_callback(query.data or "")
+    if enabled is None:
+        await query.answer(
+            "這個進度選項已失效，請重新使用 /progress。",
+            show_alert=True,
+        )
+        return
+
+    current = store.get_progress_enabled(chat.id)
+    if current == enabled:
+        status = "已開啟" if enabled else "已關閉"
+        await query.answer(f"即時任務進度{status}")
+        return
+
+    store.set_progress_enabled(chat.id, enabled)
+    status = "已開啟" if enabled else "已關閉"
+    await query.answer(f"即時任務進度{status}")
+    await query.edit_message_text(
+        progress_message(enabled),
+        reply_markup=build_progress_keyboard(enabled),
+    )
+
+
 async def post_init(application: Application) -> None:
     await application.bot.set_my_commands(
         [
@@ -740,6 +808,13 @@ def main() -> None:
     application.add_handler(CommandHandler("log", log))
     application.add_handler(CommandHandler("continue", continue_task))
     application.add_handler(CommandHandler("model", model_command))
+    application.add_handler(CommandHandler("progress", progress_command))
+    application.add_handler(
+        CallbackQueryHandler(
+            progress_callback,
+            pattern=f"^{PROGRESS_CALLBACK_PREFIX}",
+        )
+    )
     application.add_handler(
         CallbackQueryHandler(
             model_callback,

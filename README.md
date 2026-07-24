@@ -36,6 +36,7 @@ Telegram 使用者
 - 僅自動傳送 `.delivery.json` 明確指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
+- 支援 `/progress` 以 Inline Keyboard 切換中途工作摘要的即時傳送。
 - 支援 `/file <task_id>` 以互動按鈕選擇下載 artifacts。
 - 保留 `/run <prompt>` 作為舊式單次任務相容指令。
 - 支援 `/help` 列出所有目前可用的指令與功能。
@@ -169,6 +170,7 @@ tasks/
 /status
 /usage
 /model [model_id]
+/progress [on|off]
 /file <task_id> [artifact_id]
 /result <task_id>
 /log <task_id>
@@ -212,6 +214,12 @@ App Server 的 rate limits 介面取得資料；Antigravity 透過 CLI 內建的
 按鈕。模型偏好以 Telegram chat 為範圍保存，Bot 重啟後仍會保留，並從下一個
 新建 Turn 開始生效。Claude 模型目前需要 Google AI Ultra 方案，且仍受帳號
 配額與服務容量限制。
+
+`/progress` 會顯示 Inline Keyboard，可切換是否即時接收 Agent 產生的中途工作
+摘要。設定以 Telegram chat 為範圍保存，Bot 重啟後仍會保留；也可使用
+`/progress on` 或 `/progress off` 作為文字備援。此功能只轉傳可公開的進度摘要，
+不會傳送模型內部推理、完整指令輸出或原始 JSONL event；最終回答仍會依原流程
+另外傳送。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 使用，並列出該 Task
 最新一輪的 artifacts，不包含作為文字回覆來源的 `final.md`。使用者可用

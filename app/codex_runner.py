@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from typing import BinaryIO, Callable
 
 OUTPUT_CHUNK_SIZE = 64 * 1024
 SESSION_SCAN_LIMIT = 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -19,13 +21,18 @@ class CodexResult:
     session_id: str | None
 
 
-def parse_session_id(line: bytes) -> str | None:
+def parse_event(line: bytes) -> dict[str, object] | None:
     try:
         event = json.loads(line)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
 
-    if not isinstance(event, dict):
+    return event if isinstance(event, dict) else None
+
+
+def parse_session_id(line: bytes) -> str | None:
+    event = parse_event(line)
+    if event is None:
         return None
     if event.get("type") == "thread.started":
         thread_id = event.get("thread_id")
@@ -33,44 +40,91 @@ def parse_session_id(line: bytes) -> str | None:
     return None
 
 
+class ProgressEventTracker:
+    def __init__(self) -> None:
+        self.pending_message: str | None = None
+        self.last_emitted_message: str | None = None
+
+    def consume(self, event: dict[str, object]) -> str | None:
+        event_type = event.get("type")
+        if event_type == "turn.completed":
+            self.pending_message = None
+            return None
+
+        item = event.get("item")
+        if not isinstance(item, dict):
+            return None
+
+        item_type = item.get("type")
+        if event_type == "item.completed" and item_type == "agent_message":
+            message = item.get("text")
+            if not isinstance(message, str) or not message.strip():
+                return None
+            progress = self._take_pending()
+            self.pending_message = message.strip()
+            return progress
+
+        if event_type in {"item.started", "item.completed"}:
+            return self._take_pending()
+        return None
+
+    def _take_pending(self) -> str | None:
+        message = self.pending_message
+        self.pending_message = None
+        if message is None or message == self.last_emitted_message:
+            return None
+        self.last_emitted_message = message
+        return message
+
+
 async def consume_process_output(
     reader: asyncio.StreamReader,
     log_file: BinaryIO,
     session_id: str | None,
     on_session_id: Callable[[str], None] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> str | None:
     captured_session_id = session_id
-    session_buffer = bytearray()
+    line_buffer = bytearray()
+    progress_tracker = ProgressEventTracker()
+
+    def consume_line(line: bytes) -> None:
+        nonlocal captured_session_id
+        event = parse_event(line)
+        if event is None:
+            return
+
+        if not captured_session_id and event.get("type") == "thread.started":
+            thread_id = event.get("thread_id")
+            if isinstance(thread_id, str):
+                captured_session_id = thread_id
+                if on_session_id:
+                    on_session_id(thread_id)
+
+        progress = progress_tracker.consume(event)
+        if progress and on_progress:
+            try:
+                on_progress(progress)
+            except Exception:
+                logger.exception("Could not publish Codex progress event")
 
     while chunk := await reader.read(OUTPUT_CHUNK_SIZE):
         log_file.write(chunk)
         log_file.flush()
-
-        if captured_session_id:
-            continue
-
-        session_buffer.extend(chunk)
+        line_buffer.extend(chunk)
         while True:
-            newline_index = session_buffer.find(b"\n")
+            newline_index = line_buffer.find(b"\n")
             if newline_index < 0:
                 break
-            line = bytes(session_buffer[: newline_index + 1])
-            del session_buffer[: newline_index + 1]
-            parsed_session_id = parse_session_id(line)
-            if parsed_session_id:
-                captured_session_id = parsed_session_id
-                if on_session_id:
-                    on_session_id(parsed_session_id)
-                session_buffer.clear()
-                break
+            line = bytes(line_buffer[: newline_index + 1])
+            del line_buffer[: newline_index + 1]
+            consume_line(line)
 
-        if len(session_buffer) > SESSION_SCAN_LIMIT:
-            del session_buffer[:-OUTPUT_CHUNK_SIZE]
+        if len(line_buffer) > SESSION_SCAN_LIMIT:
+            del line_buffer[:-OUTPUT_CHUNK_SIZE]
 
-    if not captured_session_id and session_buffer:
-        captured_session_id = parse_session_id(bytes(session_buffer))
-        if captured_session_id and on_session_id:
-            on_session_id(captured_session_id)
+    if line_buffer:
+        consume_line(bytes(line_buffer))
     return captured_session_id
 
 
@@ -139,6 +193,7 @@ async def run_codex(
     input_dir: Path | None = None,
     session_id: str | None = None,
     model: str | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> CodexResult:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,6 +255,7 @@ async def run_codex(
                 log_file,
                 captured_session_id,
                 capture_session_id,
+                on_progress,
             )
         )
         try:

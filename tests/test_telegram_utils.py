@@ -63,6 +63,7 @@ class TelegramUtilsTests(unittest.TestCase):
                 "status",
                 "usage",
                 "model",
+                "progress",
                 "file",
                 "result",
                 "log",

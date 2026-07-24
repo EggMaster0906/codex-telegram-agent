@@ -60,6 +60,64 @@ class FakeBot:
 
 
 class WorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_enabled_progress_is_delivered_before_final_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = TaskStore(root / "tasks.sqlite3")
+            store.init()
+            store.set_progress_enabled(123, True)
+            task_id, _ = store.create_session(123, "first prompt", root)
+            settings = Settings(
+                telegram_bot_token="test",
+                allowed_chat_ids={123},
+                default_workspace=root,
+                codex_bin="codex",
+                codex_sandbox_mode="workspace-write",
+                task_timeout_seconds=60,
+                database_path=root / "tasks.sqlite3",
+                tasks_dir=root / "tasks",
+                worker_poll_seconds=0.01,
+                session_timeout_seconds=86400,
+            )
+            bot = FakeBot()
+            worker = Worker(settings, store, bot)
+
+            async def fake_run_codex(**kwargs: object) -> CodexResult:
+                on_progress = kwargs["on_progress"]
+                assert callable(on_progress)
+                store.set_progress_enabled(123, False)
+                on_progress("This should stay hidden")
+                store.set_progress_enabled(123, True)
+                on_progress("Checking the project")
+                on_progress("Running tests")
+                store.set_progress_enabled(123, False)
+                on_progress("This should also stay hidden")
+                store.set_progress_enabled(123, True)
+                output_path = kwargs["output_path"]
+                artifact_dir = kwargs["artifact_dir"]
+                assert isinstance(output_path, Path)
+                assert isinstance(artifact_dir, Path)
+                output_path.write_text("done", encoding="utf-8")
+                (artifact_dir / ".delivery.json").write_text(
+                    json.dumps({"delivery": "text", "attachments": []}),
+                    encoding="utf-8",
+                )
+                return CodexResult(0, "session-1")
+
+            with patch("app.worker.run_codex", side_effect=fake_run_codex):
+                await worker.run_turn(store.next_pending_turn())
+
+            self.assertEqual(store.get_task(task_id, 123).status, "done")
+            self.assertEqual(
+                [text for _, text in bot.messages],
+                [
+                    "Task #1 started.",
+                    "Task #1 progress:\n\nChecking the project",
+                    "Task #1 progress:\n\nRunning tests",
+                    "done",
+                ],
+            )
+
     async def test_worker_continues_after_one_turn_crashes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -177,10 +177,22 @@ class TaskStore:
                 create table if not exists chat_settings (
                     chat_id integer primary key,
                     selected_model text,
+                    progress_enabled integer not null default 0,
                     updated_at text not null
                 )
                 """
             )
+            chat_setting_columns = {
+                str(row["name"])
+                for row in conn.execute(
+                    "pragma table_info(chat_settings)"
+                ).fetchall()
+            }
+            if "progress_enabled" not in chat_setting_columns:
+                conn.execute(
+                    "alter table chat_settings add column "
+                    "progress_enabled integer not null default 0"
+                )
             conn.execute(
                 """
                 create table if not exists artifacts (
@@ -552,6 +564,27 @@ class TaskStore:
                     updated_at = excluded.updated_at
                 """,
                 (chat_id, model, utc_now()),
+            )
+
+    def get_progress_enabled(self, chat_id: int) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "select progress_enabled from chat_settings where chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+            return bool(row["progress_enabled"]) if row else False
+
+    def set_progress_enabled(self, chat_id: int, enabled: bool) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into chat_settings (chat_id, progress_enabled, updated_at)
+                values (?, ?, ?)
+                on conflict(chat_id) do update set
+                    progress_enabled = excluded.progress_enabled,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, int(enabled), utc_now()),
             )
 
     def sync_artifacts(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from telegram import Bot
 from telegram.error import TelegramError
@@ -31,6 +32,37 @@ from app.telegram_delivery import send_markdown_text
 
 
 logger = logging.getLogger(__name__)
+
+
+class _ProgressRelay:
+    def __init__(
+        self,
+        sender: Callable[[str], Awaitable[bool]],
+        enabled: Callable[[], bool],
+    ) -> None:
+        self._sender = sender
+        self._enabled = enabled
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._task = asyncio.create_task(self._run())
+
+    def publish(self, summary: str) -> None:
+        if not self._enabled():
+            return
+        self._queue.put_nowait(summary)
+
+    async def close(self) -> None:
+        self._queue.put_nowait(None)
+        await self._task
+
+    async def _run(self) -> None:
+        while True:
+            summary = await self._queue.get()
+            if summary is None:
+                return
+            try:
+                await self._sender(summary)
+            except Exception:
+                logger.exception("Could not deliver Telegram progress message")
 
 
 class Worker:
@@ -107,6 +139,18 @@ class Worker:
             return False
         return True
 
+    def progress_relay(self, chat_id: int, task_id: int) -> _ProgressRelay:
+        async def send_progress(summary: str) -> bool:
+            return await self.send_markdown_safely(
+                chat_id,
+                f"Task #{task_id} progress:\n\n{summary}",
+            )
+
+        return _ProgressRelay(
+            send_progress,
+            lambda: self.store.get_progress_enabled(chat_id),
+        )
+
     async def run_turn(self, turn: TaskTurn) -> None:
         task = self.store.get_task_by_id(turn.task_id)
         if task is None:
@@ -156,19 +200,24 @@ class Worker:
                 f"Task #{task.id} started.",
             )
 
-        result = await run_codex(
-            codex_bin=self.settings.codex_bin,
-            sandbox_mode=self.settings.codex_sandbox_mode,
-            prompt=turn.prompt,
-            workspace_path=Path(task.workspace_path),
-            artifact_dir=artifact_dir,
-            input_dir=input_directory(turn_dir),
-            log_path=log_path,
-            output_path=output_path,
-            timeout_seconds=self.settings.task_timeout_seconds,
-            session_id=task.codex_session_id,
-            model=provider_model_id(turn.model),
-        )
+        progress_relay = self.progress_relay(task.chat_id, task.id)
+        try:
+            result = await run_codex(
+                codex_bin=self.settings.codex_bin,
+                sandbox_mode=self.settings.codex_sandbox_mode,
+                prompt=turn.prompt,
+                workspace_path=Path(task.workspace_path),
+                artifact_dir=artifact_dir,
+                input_dir=input_directory(turn_dir),
+                log_path=log_path,
+                output_path=output_path,
+                timeout_seconds=self.settings.task_timeout_seconds,
+                session_id=task.codex_session_id,
+                model=provider_model_id(turn.model),
+                on_progress=progress_relay.publish,
+            )
+        finally:
+            await progress_relay.close()
 
         if result.session_id:
             self.store.set_codex_session_id(task.id, result.session_id)
@@ -276,18 +325,23 @@ class Worker:
             )
             return
 
-        result = await run_codex(
-            codex_bin=self.settings.codex_bin,
-            sandbox_mode=self.settings.codex_sandbox_mode,
-            prompt=task.prompt,
-            workspace_path=Path(task.workspace_path),
-            artifact_dir=artifact_dir,
-            input_dir=input_directory(task_dir),
-            log_path=log_path,
-            output_path=output_path,
-            timeout_seconds=self.settings.task_timeout_seconds,
-            model=provider_model_id(task.model),
-        )
+        progress_relay = self.progress_relay(task.chat_id, task.id)
+        try:
+            result = await run_codex(
+                codex_bin=self.settings.codex_bin,
+                sandbox_mode=self.settings.codex_sandbox_mode,
+                prompt=task.prompt,
+                workspace_path=Path(task.workspace_path),
+                artifact_dir=artifact_dir,
+                input_dir=input_directory(task_dir),
+                log_path=log_path,
+                output_path=output_path,
+                timeout_seconds=self.settings.task_timeout_seconds,
+                model=provider_model_id(task.model),
+                on_progress=progress_relay.publish,
+            )
+        finally:
+            await progress_relay.close()
 
         if result.exit_code == 0:
             if result.session_id:

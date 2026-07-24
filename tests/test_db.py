@@ -50,6 +50,22 @@ class TaskStoreTests(unittest.TestCase):
                 )
                 conn.execute(
                     """
+                    create table chat_settings (
+                        chat_id integer primary key,
+                        selected_model text,
+                        updated_at text not null
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    insert into chat_settings (
+                        chat_id, selected_model, updated_at
+                    ) values (123, 'old-model', '2026-01-01T00:00:00+00:00')
+                    """
+                )
+                conn.execute(
+                    """
                     insert into tasks (
                         id, chat_id, prompt, status, workspace_path, created_at
                     )
@@ -87,10 +103,17 @@ class TaskStoreTests(unittest.TestCase):
                         "select name from sqlite_master where type = 'table'"
                     )
                 }
+                chat_setting_columns = {
+                    row["name"]
+                    for row in conn.execute("pragma table_info(chat_settings)")
+                }
             self.assertIn("model", task_columns)
             self.assertIn("model", turn_columns)
             self.assertIn("turn_number", turn_columns)
             self.assertIn("artifacts", artifact_tables)
+            self.assertIn("progress_enabled", chat_setting_columns)
+            self.assertFalse(store.get_progress_enabled(123))
+            self.assertEqual(store.get_selected_model(123, None), "old-model")
             with store.connect() as conn:
                 migrated_turn_numbers = conn.execute(
                     """
@@ -391,6 +414,31 @@ class TaskStoreTests(unittest.TestCase):
             second_turn = restarted_store.next_pending_turn()
             self.assertEqual(second_turn.id, second_turn_id)
             self.assertEqual(second_turn.model, "model-b")
+
+    def test_progress_preference_defaults_off_and_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "tasks.sqlite3"
+            store = TaskStore(database_path)
+            store.init()
+
+            self.assertFalse(store.get_progress_enabled(123))
+            store.set_progress_enabled(123, True)
+            store.set_selected_model(123, "model-a")
+
+            restarted_store = TaskStore(database_path)
+            restarted_store.init()
+            self.assertTrue(restarted_store.get_progress_enabled(123))
+            self.assertEqual(
+                restarted_store.get_selected_model(123, None),
+                "model-a",
+            )
+
+            restarted_store.set_progress_enabled(123, False)
+            self.assertFalse(restarted_store.get_progress_enabled(123))
+            self.assertEqual(
+                restarted_store.get_selected_model(123, None),
+                "model-a",
+            )
 
     def test_artifact_metadata_sync_keeps_ids_and_removes_stale_rows(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
