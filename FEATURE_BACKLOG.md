@@ -16,7 +16,8 @@
 - [x] Telegram 附件輸入
 - [ ] 任務取消
 - [x] Artifact metadata 與互動式 `/file` 產物選擇
-- [x] `/model` 模型切換
+- [x] `/model` Codex 與 Antigravity 模型切換
+- [x] `/usage` Codex 與 Antigravity 剩餘用量查詢
 - [ ] Claude Code CLI 執行器與 Agent 切換
 - [ ] Antigravity CLI 執行器整合（部分完成：Gemini `/run` 單輪）
 - [ ] 多 workspace 管理
@@ -466,7 +467,7 @@ Claude 模型擴充日期：2026-07-18（臺北時間）
 
 - Antigravity conversation resume / session ID 擷取與 `/new` 多輪對話。
 - Provider-neutral DB schema，例如 `agent_provider`、`agent_session_id`。
-- 更完整的 Antigravity final output 格式解析與 usage/cost metadata。
+- 更完整的 Antigravity final output 格式解析與每個 Task 的 usage/cost metadata。
 
 ### 背景
 
@@ -568,3 +569,35 @@ Antigravity 都是同一個 worker 可分派的執行器，而不是把 Telegram
   SQLite、artifact 或 Telegram 回覆中。
 - CLI timeout、權限拒絕、server-side error、空輸出與 resume 失敗都有清楚錯誤訊息。
 - 既有 Codex Task、session resume 與 database migration 不受影響。
+
+## 8. `/usage` 剩餘用量查詢（已完成）
+
+完成日期：2026-07-18（臺北時間）
+
+### 目標
+
+讓授權使用者直接在 Telegram 查看 Codex 與 Antigravity 的剩餘額度，不必登入
+各自的 CLI 介面逐一查詢。
+
+### 已完成行為
+
+- `/usage` 會並行查詢 Codex 與 Antigravity，縮短整體等待時間。
+- Codex 透過 App Server 的 `account/rateLimits/read` 取得各額度視窗，顯示剩餘
+  百分比與可用的重設時間。
+- Antigravity 透過 pseudo-terminal 啟動互動介面並執行內建 `/usage`，解析
+  Gemini 模型及 Claude／GPT 模型群組的每週與五小時額度。
+- 任一 provider 查詢失敗時，仍保留另一方的結果，並個別顯示逾時、CLI 無法
+  執行或輸出格式錯誤等原因。
+- `/usage` 已加入 `/help` 與 Telegram Bot 指令選單，並沿用 chat 授權檢查。
+
+### 驗證
+
+- Codex App Server 單一與多額度群組解析測試。
+- Antigravity ANSI／互動輸出與模型群組解析測試。
+- 剩餘百分比、重設時間、額度狀態及 provider 個別失敗格式測試。
+
+### 範圍限制
+
+- 目前顯示 provider 帳號層級的即時額度快照，尚未記錄每個 Task／Turn 的
+  token、usage 或 cost metadata。
+- 尚未提供歷史趨勢、低額度提醒或自動限流。

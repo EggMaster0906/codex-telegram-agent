@@ -1,15 +1,17 @@
 # Codex Telegram Agent
 
 Codex Telegram Agent 是部署於 Linux 主機的輕量任務代理。授權使用者可以
-透過 Telegram 建立 Codex 任務、查詢狀態、接收文字結果，並直接下載任務
-產生的圖片、文件或其他檔案。
+透過 Telegram 建立 Codex 多輪任務或 Antigravity 單輪任務、查詢狀態與剩餘
+用量、接收文字結果，並直接下載任務產生的圖片、文件或其他檔案。
 
 ```text
 Telegram 使用者
   -> Telegram Bot
   -> SQLite 任務佇列
   -> 背景 Worker
-  -> Codex CLI
+  -> Agent Runner
+     -> Codex CLI（多輪與單輪）
+     -> Antigravity CLI（單輪）
   -> Task / Turn 獨立目錄
   -> Telegram 文字與檔案回傳
 ```
@@ -36,9 +38,12 @@ Telegram 使用者
 - 僅自動傳送 `.delivery.json` 明確指定的 artifacts。
 - 支援 `/result <task_id>` 重新查看文字結果。
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
+- 支援 `/model` 切換 Codex 與 Antigravity 的 Gemini、Claude 模型。
+- 支援 `/usage` 同時查詢 Codex 與 Antigravity 的剩餘用量。
 - 支援 `/progress` 以 Inline Keyboard 切換中途工作摘要的即時傳送。
 - 支援 `/file <task_id>` 以互動按鈕選擇下載 artifacts。
-- 保留 `/run <prompt>` 作為舊式單次任務相容指令。
+- 保留 `/run <prompt>` 作為舊式單次任務相容指令；選用 Antigravity 模型時，
+  會透過 `agy --print` 執行單輪任務。
 - 支援 `/help` 列出所有目前可用的指令與功能。
 - 所有 Task ID 操作都驗證所屬 chat ID，避免跨 chat 存取。
 - 啟動時自動 migration 既有 SQLite schema。
@@ -111,14 +116,20 @@ Bot：測試已補上……
 ```text
 codex-telegram-agent/
   app/
+    antigravity_runner.py # Antigravity CLI 單輪執行器
     artifacts.py        # Task 目錄與產物掃描
+    attachments.py      # Telegram 附件下載與輸入目錄管理
     bot.py              # Telegram command entrypoint
-    worker.py           # Background task worker
-    db.py               # SQLite schema and task operations
     config.py           # Environment configuration
     codex_runner.py     # Codex CLI subprocess wrapper
+    db.py               # SQLite schema and task operations
+    file_selection.py   # Artifact 清單、分頁與下載選擇
+    models.py           # 模型白名單與 provider 解析
     task_followup.py    # Task 結果與 log 讀取
+    telegram_delivery.py # Telegram Markdown 與訊息交付
     telegram_utils.py   # Telegram message helpers
+    usage.py            # Codex 與 Antigravity 用量查詢
+    worker.py           # Background task worker
   data/
     tasks.sqlite3       # Runtime database
   tasks/
@@ -134,11 +145,7 @@ codex-telegram-agent/
   systemd/
     codex-telegram-agent.service  # 尚未安裝的 systemd unit 範本
   tests/
-    test_artifacts.py
-    test_codex_runner.py
-    test_db.py
-    test_task_followup.py
-    test_worker.py
+    test_*.py           # 各模組單元與整合測試
   .gitignore            # 排除 secrets 與 runtime data
   .env                  # Runtime secrets and local configuration
   .env.example          # Environment template
@@ -396,6 +403,7 @@ cd /home/ai-agent/codex-telegram-agent
 - 背景 worker 可執行 Telegram 建立的 Task。
 - Codex CLI 可在 Task `artifacts/` 內實際建立檔案。
 - `final.md`、artifact 掃描、SQLite migration 與 bot 重啟均正常。
+- Antigravity `/run` 可完成單輪任務，並將最終文字與 log 寫入既有 Task 結構。
 
 本次 session/Turn 功能另完成：
 
@@ -403,10 +411,15 @@ cd /home/ai-agent/codex-telegram-agent
 - 第一輪建立 session、後續 Turn 使用相同 session ID 的 worker 測試。
 - 24 小時滑動期限、session 切換、結束與恢復測試。
 - 舊 SQLite 資料庫 migration 測試，原有 Task 紀錄保持不變。
+- Codex／Antigravity 模型解析、白名單與 provider 路由測試。
+- Codex App Server 與 Antigravity `/usage` 輸出解析、格式化及部分失敗測試。
 
 ## 待開發功能
 
 - 任務取消。
 - 超過 Telegram 上限時的替代檔案下載方式。
+- Claude Code CLI 執行器與 Agent 切換。
+- Antigravity 多輪 session、附件與 provider-neutral schema。
+- 每個 Task／Turn 的 usage 與 cost metadata。
 - 多專案 workspace 白名單。
 - systemd 常駐服務與自動重啟。
