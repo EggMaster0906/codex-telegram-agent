@@ -18,6 +18,7 @@
 - [x] Artifact metadata 與互動式 `/file` 產物選擇
 - [x] `/model` Codex 與 Antigravity 模型切換
 - [x] `/usage` Codex 與 Antigravity 剩餘用量查詢
+- [x] `/progress` Codex 即時任務進度
 - [ ] Claude Code CLI 執行器與 Agent 切換
 - [ ] Antigravity CLI 執行器整合（部分完成：Gemini `/run` 單輪）
 - [ ] 多 workspace 管理
@@ -601,3 +602,38 @@ Antigravity 都是同一個 worker 可分派的執行器，而不是把 Telegram
 - 目前顯示 provider 帳號層級的即時額度快照，尚未記錄每個 Task／Turn 的
   token、usage 或 cost metadata。
 - 尚未提供歷史趨勢、低額度提醒或自動限流。
+
+## 9. `/progress` 即時任務進度（已完成）
+
+完成日期：2026-07-24（臺北時間）
+
+### 目標
+
+讓使用者在長時間 Codex 任務執行期間收到可公開的中途工作摘要，同時避免傳送
+模型內部推理、原始事件或與最終回答重複的內容。
+
+### 已完成行為
+
+- `/progress` 顯示 Inline Keyboard，可查看並切換即時進度；另支援
+  `/progress on` 與 `/progress off` 文字操作。
+- 偏好以 Telegram chat 為範圍保存於 SQLite，預設關閉，Bot 重啟後仍會保留。
+- Codex runner 解析 JSONL `agent_message` 與後續事件，只傳送已完成的中途摘要，
+  並保留最後一則 Agent 訊息給既有最終回答流程。
+- 重複的中途摘要不會再次傳送；`turn.completed` 會清除尚未發送的最後訊息，
+  避免最終回答被誤當成進度。
+- Worker 使用獨立佇列依序交付進度；單則 Telegram 進度傳送失敗只記錄錯誤，
+  不會讓 Codex 任務失敗。
+- 任務執行期間可隨時開啟或關閉，runner 每次發布摘要時都會重新讀取目前偏好。
+
+### 驗證
+
+- `/progress` 參數、Callback Query、按鈕狀態與說明文字測試。
+- SQLite 預設值、migration 與重啟後偏好保存測試。
+- Codex JSONL 進度擷取、去重及最終回答排除測試。
+- Worker 只在功能開啟時交付進度，並確保進度先於最終回答送出的整合測試。
+
+### 範圍限制
+
+- 目前只有 Codex JSONL runner 提供可解析的進度事件；Antigravity `/run` 單輪
+  任務尚不會傳送即時進度。
+- 進度訊息不包含完整 command output、原始 JSONL event 或模型內部推理。

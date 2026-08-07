@@ -40,7 +40,7 @@ Telegram 使用者
 - 支援 `/log <task_id>` 查看最近 80 行執行 log。
 - 支援 `/model` 切換 Codex 與 Antigravity 的 Gemini、Claude 模型。
 - 支援 `/usage` 同時查詢 Codex 與 Antigravity 的剩餘用量。
-- 支援 `/progress` 以 Inline Keyboard 切換中途工作摘要的即時傳送。
+- 支援 `/progress` 以 Inline Keyboard 切換 Codex 中途工作摘要的即時傳送。
 - 支援 `/file <task_id>` 以互動按鈕選擇下載 artifacts。
 - 保留 `/run <prompt>` 作為舊式單次任務相容指令；選用 Antigravity 模型時，
   會透過 `agy --print` 執行單輪任務。
@@ -125,6 +125,7 @@ codex-telegram-agent/
     db.py               # SQLite schema and task operations
     file_selection.py   # Artifact 清單、分頁與下載選擇
     models.py           # 模型白名單與 provider 解析
+    progress.py         # 即時任務進度偏好與按鈕
     task_followup.py    # Task 結果與 log 讀取
     telegram_delivery.py # Telegram Markdown 與訊息交付
     telegram_utils.py   # Telegram message helpers
@@ -222,11 +223,11 @@ App Server 的 rate limits 介面取得資料；Antigravity 透過 CLI 內建的
 新建 Turn 開始生效。Claude 模型目前需要 Google AI Ultra 方案，且仍受帳號
 配額與服務容量限制。
 
-`/progress` 會顯示 Inline Keyboard，可切換是否即時接收 Agent 產生的中途工作
+`/progress` 會顯示 Inline Keyboard，可切換是否即時接收 Codex 產生的中途工作
 摘要。設定以 Telegram chat 為範圍保存，Bot 重啟後仍會保留；也可使用
 `/progress on` 或 `/progress off` 作為文字備援。此功能只轉傳可公開的進度摘要，
 不會傳送模型內部推理、完整指令輸出或原始 JSONL event；最終回答仍會依原流程
-另外傳送。
+另外傳送。Antigravity 單輪任務目前不會產生即時進度訊息。
 
 `/file <task_id>` 只允許原任務所屬的 Telegram chat 使用，並列出該 Task
 最新一輪的 artifacts，不包含作為文字回覆來源的 `final.md`。使用者可用
@@ -413,6 +414,7 @@ cd /home/ai-agent/codex-telegram-agent
 - 舊 SQLite 資料庫 migration 測試，原有 Task 紀錄保持不變。
 - Codex／Antigravity 模型解析、白名單與 provider 路由測試。
 - Codex App Server 與 Antigravity `/usage` 輸出解析、格式化及部分失敗測試。
+- Codex JSONL 進度事件去重、最終回覆排除、偏好保存與 worker 交付測試。
 
 ## 待開發功能
 
